@@ -3,8 +3,7 @@
 #include "FunctionTraits.h"
 #include "NonCopyable.h"
 #include "Task.h"
-#include "TaskFuture.h"
-#include "TaskFutureUtils.h"
+#include "TaskUtils.h"
 #include "Types.h"
 
 #include <assert.h>
@@ -14,6 +13,7 @@
 #include <exception>
 #include <future>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <thread>
 #include <tuple>
@@ -23,17 +23,20 @@
 namespace conc11
 {
 
+std::mutex g_coutMutex; // TEMP!!!
+
 template<unsigned int N>
 struct JoinAndSetValueRecursive;
 
 class TaskScheduler : public NonCopyable
 {
-	typedef Concurrency::concurrent_queue<Task> QueueType;
+	typedef Concurrency::concurrent_queue<std::shared_ptr<ITask>> QueueType;
 
 public:
 
-	TaskScheduler(unsigned int threadCount = std::max(1U, std::thread::hardware_concurrency()))
+	TaskScheduler(unsigned int threadCount = std::max(2U, std::thread::hardware_concurrency()) - 1)
 		: m_running(true)
+		, m_taskConsumerCount(threadCount)
 	{
 		std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -47,21 +50,27 @@ public:
 				}
 				catch (const std::future_error& e)
 				{
+					std::unique_lock<std::mutex> lock(g_coutMutex);
+
+					std::cout << std::endl << "Exception caught in TaskScheduler thread " << std::this_thread::get_id() << ": ";
+
 					if (e.code() == std::make_error_code(std::future_errc::broken_promise))
-						__debugbreak();
+						std::cout << e.what() << std::endl;
 					else if (e.code() == std::make_error_code(std::future_errc::future_already_retrieved))
-						__debugbreak();
+						std::cout << e.what() << std::endl;
 					else if (e.code() == std::make_error_code(std::future_errc::promise_already_satisfied))
-						__debugbreak();
+						std::cout << e.what() << std::endl;
 					else if (e.code() == std::make_error_code(std::future_errc::no_state))
-						__debugbreak();
+						std::cout << e.what() << std::endl;
 					else
-						__debugbreak();
+						std::cout << e.what() << std::endl;
 				}
 				catch (...)
 				{
-					__debugbreak();
+					std::cout << "unhandled exception" << std::endl;
 				}
+
+				m_taskConsumerCount--;
 
 				std::notify_all_at_thread_exit(m_cv, std::move(std::unique_lock<std::mutex>(m_mutex)));
 			})));
@@ -70,14 +79,17 @@ public:
 
 	~TaskScheduler()
 	{
-		waitJoin();
+		waitJoin(true);
 
 		// signal threads to exit
-		m_queue.push([this]
+		auto p = std::make_shared<std::promise<void>>();
+		auto t = std::make_shared<Task<void>>([=, this]
 		{
 			m_running = false;
-		});
-
+			p->set_value();
+		}, std::move(p->get_future()), TaskPriority::Normal, "killThreads");
+		
+		m_queue.push(t);
 		wakeOne();
 
 		for (auto& t : m_threads)
@@ -86,15 +98,33 @@ public:
 		assert(m_queue.empty());
 	}
 
-	void waitJoin() const
+	void waitJoin(bool enableAllDeferred = false) const
 	{
-		// join in on tasks until queue is empty and threads are idle
-		while (m_sleepingThreadCount < m_threads.size())
+		// join in on tasks until queue is empty and no consumers are running
+		std::shared_ptr<ITask> t;
+		while (m_taskConsumerCount > 0)
 		{
-			Task t;
+			// process deferred queue and add enabled jobs to main queue
+			QueueType deferredQueue;
+			while (m_deferredQueue.try_pop(t))
+			{
+				assert(t.get());
+				if (*t || enableAllDeferred)
+					m_queue.push(t);
+				else
+					deferredQueue.push(t);
+			}
+			// push back tasks in deferred queue
+			while (m_deferredQueue.try_pop(t))
+			{
+				assert(t.get());
+				m_deferredQueue.push(t);
+			}
+
 			while (m_queue.try_pop(t))
 			{
-				t();
+				assert(t.get() && *t);
+				(*t)();
 				std::this_thread::yield();
 			}
 			std::this_thread::yield();
@@ -103,141 +133,164 @@ public:
 
 	// ReturnType Func(void) w/o dependency.
 	template<typename Func>
-	auto createTask(Func f) const -> TaskFuture<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, TaskPriority priority = Normal, const std::string& name = "") const
 	{
 		return createTaskWithoutDependency(
 			f,
 			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-			std::is_void<FunctionTraits<Func>::ReturnType>());
+			std::is_void<FunctionTraits<Func>::ReturnType>(),
+			priority,
+			name);
 	}
 
 	// ReturnType Func(T) with dependency.
 	template<typename Func, typename T>
-	auto createTask(Func f, const TaskFuture<T>& dependency) const -> TaskFuture<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, TaskPriority priority = Normal, const std::string& name = "") const
 	{
 		return createTaskWithDependency(
 			f,
 			dependency,
 			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
 			std::is_void<FunctionTraits<Func>::ReturnType>(),
-			std::is_assignable<T, FunctionTraits<Func>::Arg<0>::Type>());
+			std::is_assignable<T, FunctionTraits<Func>::Arg<0>::Type>(),
+			priority,
+			name);
 	}
 
 	// join heterogeneous futures
 	template<typename T, typename U, typename... Args>
-	auto join(const TaskFuture<T>& f0, const TaskFuture<U>& f1, const TaskFuture<Args>&... fn) const -> TaskFuture<std::tuple<T, U, Args...>>
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, TaskPriority priority = Normal, const std::string& name = ""*/) const
 	{
-		return joinHeteroFutures(f0, f1, fn...);
+		return joinHeteroFutures(f0, f1, fn.../*, priority, name*/);
 	}
 
 	// join homogeneous futures
 	template<typename FutureContainer>
-	auto join(const FutureContainer& c) const -> TaskFuture<std::vector<typename FutureContainer::value_type::ReturnType>>
+	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c/*, TaskPriority priority = Normal, const std::string& name = ""*/) const
 	{
-		return joinHomoFutures(c);
+		return joinHomoFutures(c/*, priority, name*/);
 	}
 
 private:
 
 	template<typename Func, typename T, typename U>
-	auto createTaskWithoutDependency(Func f, T argIsVoid, U fIsVoid) const -> TaskFuture<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, T argIsVoid, U fIsVoid, TaskPriority priority, const std::string& name) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = TaskFuture<ReturnType>(std::move(p->get_future()), *this);
-
-		m_queue.push([=]
+		auto t = std::make_shared<Task<ReturnType>>([=]
 		{
-			trySetFuncResult(*p, f, TaskFuture<UnitType>(*this), argIsVoid, fIsVoid, std::false_type());
-		});
+			trySetFuncResult(*p, f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
+		}, std::move(p->get_future()), priority, name);
 
+		m_deferredQueue.push(t);
 		wakeOne();
 
-		return fut;
+		return t;
 	}
 
 	template<typename Func, typename T, typename U, typename V, typename X>
-	auto createTaskWithDependency(Func f, const TaskFuture<T>& dependency, U argIsVoid, V fIsVoid, X argIsAssignable) const -> TaskFuture<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, U argIsVoid, V fIsVoid, X argIsAssignable, TaskPriority priority, const std::string& name) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = TaskFuture<ReturnType>(std::move(p->get_future()), *this);
-
-		m_queue.push([=]
+		auto fut = p->get_future();
+		auto t = std::make_shared<Task<ReturnType>>([=, &fut]
 		{
-			pollDependencyAndCallOrResubmit(f, p, dependency, argIsVoid, fIsVoid, argIsAssignable);
-		});
+			pollDependencyAndCallOrResubmit(p, fut, f, dependency->getFuture(), argIsVoid, fIsVoid, argIsAssignable, priority, name);
+		}, std::move(fut), dependency->getEnabler(), priority, name);
 
+		/*auto p = std::make_shared<std::promise<ReturnType>>();
+		auto t = std::make_shared<Task<ReturnType>>([=]
+		{
+			trySetFuncResult(*p, f, dependency->getFuture(), argIsVoid, fIsVoid, argIsAssignable);
+		}, std::move(p->get_future()), dependency->getEnabler(), priority, name);*/
+
+		m_queue.push(t);
 		wakeOne();
 
-		return fut;
+		return t;
 	}
 
 	template<typename T, typename U, typename... Args>
-	auto joinHeteroFutures(const TaskFuture<T>& f0, const TaskFuture<U>& f1, const TaskFuture<Args>&... fn) const -> TaskFuture<std::tuple<T, U, Args...>>
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> joinHeteroFutures(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, TaskPriority priority, const std::string& name*/) const
 	{
 		typedef std::tuple<T, U, Args...> ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = TaskFuture<ReturnType>(std::move(p->get_future()), *this);
-
-		m_queue.push([=]
+		auto t = std::make_shared<Task<ReturnType>>([=]
 		{
 			ReturnType ret;
-
-			JoinAndSetValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0, f1, fn...);
-
+			JoinAndSetValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0->getFuture(), f1->getFuture(), fn->getFuture()...);
 			trySetResult(*p, std::move(ret));
-		});
+		}, std::move(p->get_future()), std::make_shared<bool>(true) /* until I figure out how to make an enabler for N dependencies*/ , TaskPriority::Normal, "joinHeteroFutures");
 
+		m_queue.push(t);
 		wakeOne();
 
-		return fut;
+		return t;
 	}
 
 	template<typename FutureContainer>
-	auto joinHomoFutures(const FutureContainer& c) const -> TaskFuture<std::vector<typename FutureContainer::value_type::ReturnType>>
+	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> joinHomoFutures(const FutureContainer& c/*, TaskPriority priority, const std::string& name*/) const
 	{
-		typedef typename FutureContainer::value_type::ReturnType ElementType;
-		typedef std::vector<ElementType> ReturnType;
+		typedef std::vector<typename FutureContainer::value_type::element_type::ReturnType> ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = TaskFuture<ReturnType>(std::move(p->get_future()), *this);
-
-		m_queue.push([=]
+		auto t = std::make_shared<Task<ReturnType>>([=]
 		{
 			ReturnType ret;
 			ret.reserve(c.size());
 
 			for (auto&n : c)
-				ret.push_back(n.get());
+				ret.push_back(n->getFuture().get());
 
 			trySetResult(*p, std::move(ret));
-		});
+		}, std::move(p->get_future()), std::make_shared<bool>(true) /* until I figure out how to make an enabler for N dependencies*/, TaskPriority::Normal, "joinHomoFutures");
 
+		m_queue.push(t);
 		wakeOne();
 
-		return fut;
+		return t;
 	}
 
 	void threadMain() const
 	{
-		Task t;
+		std::shared_ptr<ITask> t;
 		while (m_running)
 		{
+			// process deferred queue and add enabled jobs to main queue
+			QueueType deferredQueue;
+			while (m_deferredQueue.try_pop(t))
+			{
+				assert(t.get());
+				if (*t)
+					m_queue.push(t);
+				else
+					deferredQueue.push(t);
+			}
+			// push back tasks in deferred queue
+			while (m_deferredQueue.try_pop(t))
+			{
+				assert(t.get());
+				m_deferredQueue.push(t);
+			}
+
+			// process main queue or sleep
 			if (m_queue.try_pop(t))
 			{
-				t();
+				assert(t.get() && *t);
+				(*t)();
 				std::this_thread::yield();
 			}
 			else
 			{
 				std::unique_lock<std::mutex> lock(m_mutex);
-				m_sleepingThreadCount++;
+				m_taskConsumerCount--;
 				m_cv.wait(lock);
-				m_sleepingThreadCount--;
+				m_taskConsumerCount++;
 			}
 		}
 	}
@@ -255,30 +308,33 @@ private:
 	}
 
 	template<typename Func, typename T, typename U, typename V, typename X, typename Y>
-	bool pollDependencyAndCallOrResubmit(Func f, std::shared_ptr<std::promise<T>> p, const TaskFuture<U>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable) const
+	void pollDependencyAndCallOrResubmit(std::shared_ptr<std::promise<T>> p, std::future<T>& fut, Func f, const std::shared_future<U>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable, TaskPriority priority, const std::string& name) const
 	{
-		// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
-		if (dependency.ready())
-		{
-			return trySetFuncResult(*p, f, dependency, argIsVoid, fIsVoid, argIsAssignable);
-		}
-
 		// The implementations are encouraged to detect the case when valid == false before the call
 		// and throw a future_error with an error condition of future_errc::no_state. 
 		// http://en.cppreference.com/w/cpp/thread/future/wait_for
 		if (dependency.valid())
 		{
+			// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
+			if (dependency._Is_ready())
+			{
+				trySetFuncResult(*p, f, dependency, argIsVoid, fIsVoid, argIsAssignable);
+				return;
+			}
+
 			switch (dependency.wait_for(std::chrono::seconds(0)))
 			{
+			default:
 			case std::future_status::ready:
-				return trySetFuncResult(*p, f, dependency, argIsVoid, fIsVoid, argIsAssignable);
+				trySetFuncResult(*p, f, dependency, argIsVoid, fIsVoid, argIsAssignable);
+				break;
 			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 			case std::future_status::timeout:
 				// "Just when I thought I was out... they pull me back in." - Michael Corleone
-				m_queue.push([=]
+				m_queue.push(std::make_shared<Task<T>>([=, &fut]
 				{
-					pollDependencyAndCallOrResubmit(f, p, dependency, argIsVoid, fIsVoid, argIsAssignable);
-				});
+					pollDependencyAndCallOrResubmit(p, fut, f, dependency, argIsVoid, fIsVoid, argIsAssignable, priority, name);
+				}, std::move(fut), priority, name));
 				break;
 			}
 		}
@@ -286,15 +342,14 @@ private:
 		{
 			throw std::future_error(std::future_errc::no_state, "broken dependency");
 		}
-
-		return false;
 	}
 
 	mutable std::mutex m_mutex;
 	mutable std::condition_variable m_cv;
 	mutable QueueType m_queue;
+	mutable QueueType m_deferredQueue;
 	mutable std::vector<std::shared_ptr<std::thread>> m_threads;
-	mutable std::atomic_int_fast16_t m_sleepingThreadCount;
+	mutable std::atomic_int_fast16_t m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 };
 

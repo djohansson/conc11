@@ -1,121 +1,157 @@
 #pragma once
 
+#include "FunctionTraits.h"
+#include "NonCopyable.h"
 #include "Types.h"
 
+#include <assert.h>
+
 #include <functional>
+#include <future>
+#include <string>
 #include <utility>
 
 namespace conc11
 {
 
-class Task : public std::function<void()>
+enum TaskPriority
 {
-	typedef std::function<void()> BaseType;
+	Low = 0,
+	Normal,
+	High
+};
 
+struct ITask
+{
+	virtual void operator()() = 0;
+	virtual operator bool() const = 0;
+	virtual void enable() = 0;
+};
+
+template<typename T>
+class Task : public ITask, public NonCopyable
+{
 public:
 
-	enum Priority
-	{
-		Low = 0,
-		Normal,
-		High
-	};
+	typedef T ReturnType;
 
-	Task(Priority priority = Normal)
-		: BaseType()
+	template<typename Func>
+	Task(Func&& f, std::future<ReturnType>&& fut, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(std::forward<Func>(f))
+		, m_future(std::forward<std::future<ReturnType>>(fut))
 		, m_priority(priority)
-	{ }
+		, m_name(name)
+		, m_enabled(std::make_shared<bool>(false))
+	{
+		assert(m_function);
+	}
 
-	Task(const Task& t)
-		: BaseType(t)
-		, m_priority(t.m_priority)
-	{ }
-
-	Task(Task&& t)
-		: BaseType(std::forward<BaseType>(t))
-		, m_priority(std::forward<Priority>(t.m_priority))
-	{ }
-
-	template<class Func>
-	Task(Func&& f, Priority priority = Normal)
-		: BaseType(std::forward<Func>(f))
+	template<typename Func>
+	Task(Func&& f, std::future<ReturnType>&& fut, const std::shared_ptr<bool>& enabler, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(std::forward<Func>(f))
+		, m_future(std::forward<std::future<ReturnType>>(fut))
 		, m_priority(priority)
-	{ }
+		, m_name(name)
+		, m_enabled(enabler)
+	{
+		assert(m_function);
+	}
 
-	template<class Func>
-	Task(const Func& f, Priority priority = Normal)
-		: BaseType(f)
+	template<typename Func>
+	Task(const Func& f, std::future<ReturnType>&& fut, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(f)
+		, m_future(std::forward<std::future<ReturnType>>(fut))
 		, m_priority(priority)
-	{ }
+		, m_name(name)
+		, m_enabled(std::make_shared<bool>(false))
+	{
+		assert(m_function);
+	}
 
-	Task(std::nullptr_t null, Priority priority = Normal)
-		: BaseType(null)
+	template<typename Func>
+	Task(const Func& f, std::future<ReturnType>&& fut, const std::shared_ptr<bool>& enabler, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(f)
+		, m_future(std::forward<std::future<ReturnType>>(fut))
 		, m_priority(priority)
-	{ }
+		, m_name(name)
+		, m_enabled(enabler)
+	{
+		assert(m_function);
+	}
 
-	template<class Func>
-	Task(std::reference_wrapper<Func> f, Priority priority = Normal)
-		: BaseType(f)
+	template<typename Func>
+	Task(std::reference_wrapper<Func> f, std::future<ReturnType>&& fut, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(f)
+		, m_future(std::forward<std::future<ReturnType>>(fut))
 		, m_priority(priority)
+		, m_name(name)
+		, m_enabled(std::make_shared<bool>(false))
+	{
+		assert(m_function);
+	}
+
+	template<typename Func>
+	Task(std::reference_wrapper<Func> f, std::future<ReturnType>&& fut, const std::shared_ptr<bool>& enabler, TaskPriority priority = Normal, const std::string& name = "")
+		: m_function(f)
+		, m_future(std::forward<std::future<ReturnType>>(fut))
+		, m_priority(priority)
+		, m_name(name)
+		, m_enabled(enabler)
+	{
+		assert(m_function);
+	}
+
+	virtual ~Task()
 	{ }
 
-	~Task()
-	{ }
-
-	Task& operator=(const Task& rhs)
+	virtual void operator()()
 	{
-		BaseType::operator=(rhs);
-		m_priority = rhs.m_priority;
-		return (*this);
+		assert(m_enabled && m_function);
+
+		m_function();
+		
+		if (m_continuation && *m_continuation)
+			(*m_continuation)();
 	}
 
-	Task& operator=(Task&& rhs)
+	virtual operator bool() const
 	{
-		BaseType::operator=(std::forward<BaseType>(rhs));
-		m_priority = std::forward<Priority>(rhs.m_priority);
-		return (*this);
+		assert(m_function);
+
+		return *m_enabled;
 	}
 
-	template<class Func>
-	Task& operator=(Func&& f)
-	{
-		BaseType::operator=(std::forward<Func>(f));
-		m_priority = Normal;
-		return (*this);
-	}
+	virtual void enable() { *m_enabled = true; }
 
-	Task& operator=(std::nullptr_t null)
-	{
-		BaseType::operator=(null);
-		m_priority = Normal;
-		return (*this);
-	}
+	inline const std::shared_ptr<bool>& getEnabler() const { return m_enabled; }
 
-	template<class Func>
-	Task& operator=(std::reference_wrapper<Func> f)
-	{
-		BaseType::operator=(f);
-		m_priority = Normal;
-		return (*this);
-	}
+	inline std::shared_future<ReturnType> getFuture() const { return m_future; }
 
-	inline void operator()() const
+	template<typename Func>
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, const std::string& name = "")
 	{
-		(*static_cast<const BaseType*>(this))();
-		// todo: run continuations here.
-	}
+		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
-	inline void swap(Task& rhs)
-	{
-		BaseType::swap(rhs);
-		std::swap(m_priority, rhs.m_priority);
-	}
+		auto p = std::make_shared<std::promise<ThenReturnType>>();
+		m_continuation = std::make_shared<Task<ThenReturnType>>([=, this]
+		{
+			trySetFuncResult(*p, f, m_future,
+				std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
+				std::is_void<FunctionTraits<Func>::ReturnType>(),
+				std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
+		}, std::move(p->get_future()), m_enabled, m_priority, name);
 
-	inline bool operator<(const Task& rhs) const { return m_priority < rhs.m_priority; }
+		return std::static_pointer_cast<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>>(m_continuation);
+	}
 
 private:
 
-	Priority m_priority;
+	std::function<void()> m_function;
+	std::shared_future<ReturnType> m_future;
+	TaskPriority m_priority;
+	std::shared_ptr<ITask> m_continuation;
+	std::string m_name;
+	std::shared_ptr<bool> m_enabled;
 };
 
 } // namespace conc11
