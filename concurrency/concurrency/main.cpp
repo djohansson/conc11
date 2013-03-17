@@ -56,25 +56,29 @@ int main(int argc, char* argv[])
 
 	TaskScheduler scheduler;
 
+	auto print = [](string s)
+	{
+		unique_lock<mutex> lock(g_coutMutex);
+		cout << s << endl;
+	};
+
 	auto hello = scheduler.createTask([]
 	{
 		return string("hello");
 	}, TaskPriority::Normal, "hello");
-	auto world = scheduler.createTask([]
+
+	auto world = scheduler.createTask([](string s)
 	{
-		return string(" world!");
-	}, TaskPriority::Normal, "world");
-	auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
+		return s + string(" world!");
+	}, hello, TaskPriority::Normal, "world")->then(print, "hello world print");
+
+	/*auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
 	{
 		return get<0>(t) + get<1>(t);
-	}, "hello world join")->then([](string s)
-	{
-		unique_lock<mutex> lock(g_coutMutex);
-		cout << s << endl;
-	}, "hello world print");
+	}, "hello world join")->then(print, "hello world print");
+	*/
 
 	hello->enable();
-	world->enable();
 	
 	/*
 	vector<shared_ptr<Task<int>>> tasks;

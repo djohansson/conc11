@@ -65,13 +65,24 @@ inline static void trySetFuncResult(std::promise<UnitType>& p, Func f, const std
 	}
 }
 
-// join - forward
 template<typename Fut>
 inline static void trySetResult(std::promise<Fut>& p, Fut&& val) 
 {
 	try
 	{
 		p.set_value(std::forward<Fut>(val));
+	}
+	catch (...)
+	{
+		p.set_exception(std::current_exception());
+	}
+}
+
+inline static void trySetResult(std::promise<void>& p) 
+{
+	try
+	{
+		p.set_value();
 	}
 	catch (...)
 	{
