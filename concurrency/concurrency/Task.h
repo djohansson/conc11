@@ -15,13 +15,6 @@
 namespace conc11
 {
 
-enum TaskPriority
-{
-	Low = 0,
-	Normal,
-	High
-};
-
 enum TaskStatus
 {
 	Unscheduled,
@@ -31,16 +24,24 @@ enum TaskStatus
 	Invalid
 };
 
-struct ITask
+class TaskBase
 {
+public:
+
 	virtual void operator()() = 0;
 	virtual operator bool() const = 0;
 	virtual TaskStatus getStatus() const = 0;
 	virtual void setStatus(TaskStatus status) = 0;
+
+	inline static unsigned int getInstanceCount() { return s_instanceCount; }
+
+protected:
+
+	static unsigned int s_instanceCount;
 };
 
 template<typename T>
-class Task : public ITask, public NonCopyable
+class Task : public TaskBase, public NonCopyable
 {
 public:
 
@@ -53,7 +54,7 @@ public:
 		s_instanceCount++;
 	}
 
-	~Task()
+	virtual ~Task()
 	{
 		assert(m_status != ScheduledOnce || m_status != ScheduledPolling);
 		s_instanceCount--;
@@ -103,19 +104,19 @@ public:
 		m_function = std::forward<std::function<void()>>(f);
 	}
 
-	inline const std::shared_ptr<ITask>& getContinuation() const
+	inline const std::shared_ptr<TaskBase>& getContinuation() const
 	{
 		return m_continuation;
 	}
 
-	inline void setContinuation(const std::shared_ptr<ITask>& c)
+	inline void setContinuation(const std::shared_ptr<TaskBase>& c)
 	{
 		m_continuation = c;
 	}
 
-	inline void moveContinuation(std::shared_ptr<ITask>&& c)
+	inline void moveContinuation(std::shared_ptr<TaskBase>&& c)
 	{
-		m_continuation = std::forward<std::shared_ptr<ITask>>(c);
+		m_continuation = std::forward<std::shared_ptr<TaskBase>>(c);
 	}
 
 	inline const std::shared_ptr<std::promise<ReturnType>>& getPromise() const
@@ -171,14 +172,22 @@ public:
 		auto p = std::make_shared<std::promise<ThenReturnType>>();
 		auto fut = p->get_future().share();
 		auto t = std::make_shared<Task<ThenReturnType>>(name);
-		auto tf = std::function<void()>([=, this]
+		std::weak_ptr<Task<ThenReturnType>> tw = t;
+		auto tf = std::function<void()>([this, tw, f]
 		{
-			trySetFuncResult(*p, f, m_future,
-				std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-				std::is_void<FunctionTraits<Func>::ReturnType>(),
-				std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
+			if (auto t = tw.lock())
+			{
+				trySetFuncResult(*(t->getPromise()), f, m_future,
+					std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
+					std::is_void<FunctionTraits<Func>::ReturnType>(),
+					std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
 
-			t->setStatus(Done);
+				t->setStatus(Done);
+			}
+			else
+			{
+				assert(false);
+			}
 		});
 		
 		t->movePromise(std::move(p));
@@ -196,15 +205,12 @@ private:
 	std::function<void()> m_function;
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
-	std::shared_ptr<ITask> m_continuation;
+	std::shared_ptr<TaskBase> m_continuation;
 	std::shared_ptr<ITaskEnabler> m_enabler;
 	std::string m_name;
 	TaskStatus m_status;
-
-	static unsigned int s_instanceCount;
 };
 
-template<typename T>
-unsigned int Task<T>::s_instanceCount(0);
+unsigned int TaskBase::s_instanceCount = 0;
 
 } // namespace conc11

@@ -78,7 +78,7 @@ int main(int argc, char* argv[])
 	}, "hello world join")->then(print, "hello world print");
 	
 	vector<shared_ptr<Task<int>>> tasks;
-	for (unsigned int i = 0; i < 20; i++)
+	for (unsigned int i = 0; i < 200; i++)
 	{
 		tasks.push_back(scheduler.createTask([=]
 		{
@@ -87,7 +87,7 @@ int main(int argc, char* argv[])
 				cout << to_string(i) << ":[" << this_thread::get_id() << "]" << endl;
 			}
 
-			static const unsigned int imageSize = 2048;
+			static const unsigned int imageSize = 1024;
 			unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
 			mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 			return i;
