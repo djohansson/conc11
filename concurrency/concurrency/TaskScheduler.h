@@ -37,7 +37,8 @@ public:
 	TaskScheduler(unsigned int threadCount = std::max(2U, std::thread::hardware_concurrency()) - 1)
 		: m_running(true)
 		, m_taskConsumerCount(threadCount)
-		, m_updateWaitListTaskEnabled(false)
+		, m_schedulerTaskEnabled(false)
+		, m_killSchedulerTask(false)
 	{
 		for (unsigned int i = 0; i < threadCount; i++)
 		{
@@ -82,11 +83,19 @@ public:
 		
 		// signal threads to exit
 		auto p = std::make_shared<std::promise<void>>();
-		auto t = std::make_shared<Task<void>>([=, this]
+		auto fut = p->get_future().share();
+		auto e = std::make_shared<TaskEnabler<bool>>(true);
+		auto t = std::make_shared<Task<void>>("killThreads");
+		auto tf = std::function<void()>([=, this]
 		{
 			m_running = false;
 			p->set_value();
-		}, p->get_future().share(), std::make_shared<TaskEnabler<bool>>(true), TaskPriority::Normal, "killThreads");
+			t->setStatus(Done);
+		});
+		t->movePromise(std::move(p));
+		t->moveFuture(std::move(fut));
+		t->moveEnabler(std::move(e));
+		t->moveFunction(std::move(tf));
 		
 		m_queue.push(t);
 		wakeOne();
@@ -101,46 +110,32 @@ public:
 	void wait()
 	{
 		// signal wait list update task to return
-		m_updateWaitListTaskEnabled = false;
-
-		// join in on tasks until queue is empty and no consumers are running
-		waitJoin();
+		m_killSchedulerTask = false;
 
 		// update wait list on this thread
-		unsigned int n = 0;
-		while (!updateWaitList(true))
-			n++;
+		while (!scheduleOneOrRequeueInWaitList(true));
+		
+		// wake all
+		wakeAll();
 
-		// wake the appropriate number of worker threads
-		if (n > 0)
-		{
-			if (n > 1)
-				wakeAll();
-			else
-				wakeOne();
-		}
-
-		// and join in again.
+		// and join in.
 		waitJoin();
-
-		// done!
 	}
 
 	// ReturnType Func(void) w/o dependency. threadsafe
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, TaskPriority priority = Normal, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f = Normal, const std::string& name = "") const
 	{
 		return createTaskWithoutDependency(
 			f,
 			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
 			std::is_void<FunctionTraits<Func>::ReturnType>(),
-			priority,
 			name);
 	}
 
 	// ReturnType Func(T) with dependency. threadsafe. todo: remove. no point in having this once join works as intended.
 	template<typename Func, typename T>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, TaskPriority priority = Normal, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency = Normal, const std::string& name = "") const
 	{
 		return createTaskWithDependency(
 			f,
@@ -148,110 +143,145 @@ public:
 			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
 			std::is_void<FunctionTraits<Func>::ReturnType>(),
 			std::is_assignable<T, FunctionTraits<Func>::Arg<0>::Type>(),
-			priority,
 			name);
 	}
 
 	// join heterogeneous tasks. threadsafe
 	template<typename T, typename U, typename... Args>
-	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, TaskPriority priority = Normal, const std::string& name = ""*/) const
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/* = Normal, const std::string& name = ""*/) const
 	{
-		return joinHeteroFutures(f0, f1, fn.../*, priority, name*/);
+		return joinHeteroFutures(f0, f1, fn.../*, name*/);
 	}
 
 	// join homogeneous tasks. threadsafe
 	template<typename FutureContainer>
-	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c/*, TaskPriority priority = Normal, const std::string& name = ""*/) const
+	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c/* = Normal, const std::string& name = ""*/) const
 	{
-		return joinHomoFutures(c/*, priority, name*/);
+		return joinHomoFutures(c/*, name*/);
 	}
 
 private:
 
 	// threadsafe
 	template<typename Func, typename T, typename U>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, T argIsVoid, U fIsVoid, TaskPriority priority, const std::string& name) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, T argIsVoid, U fIsVoid, const std::string& name) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto t = std::make_shared<Task<ReturnType>>([=]
+		auto fut = p->get_future().share();
+		auto e = std::make_shared<TaskEnabler<bool>>(false);
+		auto t = std::make_shared<Task<ReturnType>>(name);
+		auto tf = std::function<void()>([=]
 		{
 			trySetFuncResult(*p, f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
-		}, p->get_future().share(), priority, name);
+			t->setStatus(Done);
+		});
+		t->movePromise(std::move(p));
+		t->moveFuture(std::move(fut));
+		t->moveEnabler(std::move(e));
+		t->moveFunction(std::move(tf));
 
 		m_waitList.push(t);
-		createUpdateWaitListTask();
+		createSchedulerUpdateTask();
 		
 		return t;
 	}
 
 	// threadsafe
 	template<typename Func, typename T, typename U, typename V, typename X>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, U argIsVoid, V fIsVoid, X argIsAssignable, TaskPriority priority, const std::string& name) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, U argIsVoid, V fIsVoid, X argIsAssignable, const std::string& name) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
 		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ReturnType>>([=]
+		auto e = dependency->getEnabler();
+		auto t = std::make_shared<Task<ReturnType>>(name);
+		auto tf = std::function<void()>([=]
 		{
-			pollDependencyAndCallOrResubmit(p, fut, f, dependency, argIsVoid, fIsVoid, argIsAssignable, priority, name);
-		}, fut, dependency->enabler(), priority, name);
+			pollDependencyAndCallOrResubmit(
+				f,
+				t,
+				dependency,
+				argIsVoid,
+				fIsVoid,
+				argIsAssignable);
+		});
+		t->movePromise(std::move(p));
+		t->moveFuture(std::move(fut));
+		t->moveEnabler(std::move(e));
+		t->moveFunction(std::move(tf));
 
 		m_waitList.push(t);
-		createUpdateWaitListTask();
+		createSchedulerUpdateTask();
 
 		return t;
 	}
 
 	// threadsafe
 	template<typename T, typename U, typename... Args>
-	std::shared_ptr<Task<std::tuple<T, U, Args...>>> joinHeteroFutures(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, TaskPriority priority, const std::string& name*/) const
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> joinHeteroFutures(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, const std::string& name*/) const
 	{
 		typedef std::tuple<T, U, Args...> ReturnType;
 
 		std::array<std::shared_ptr<ITaskEnabler>, 2+sizeof...(Args)> enablers;
-		ArraySetValueRecursive<(2+sizeof...(Args))>::invoke(enablers, f0->enabler(), f1->enabler(), fn->enabler()...);
+		ArraySetValueRecursive<(2+sizeof...(Args))>::invoke(enablers, f0->getEnabler(), f1->getEnabler(), fn->getEnabler()...);
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto t = std::make_shared<Task<ReturnType>>([=]
+		auto fut = p->get_future().share();
+		auto e = std::make_shared<TaskEnabler<std::shared_ptr<ITaskEnabler>, 2+sizeof...(Args)>>(std::move(enablers));
+		auto t = std::make_shared<Task<ReturnType>>("joinHeteroFutures");
+		auto tf = std::function<void()>([=]
 		{
 			ReturnType ret;
-			JoinAndSetTupleValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0->future(), f1->future(), fn->future()...);
+			JoinAndSetTupleValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0->getFuture(), f1->getFuture(), fn->getFuture()...);
 			trySetResult(*p, std::move(ret));
-		}, p->get_future().share(), std::make_shared<TaskEnabler<std::shared_ptr<ITaskEnabler>, 2+sizeof...(Args)>>(std::move(enablers)), TaskPriority::Normal, "joinHeteroFutures");
+			t->setStatus(Done);
+		});
+		t->movePromise(std::move(p));
+		t->moveFuture(std::move(fut));
+		t->moveEnabler(std::move(e));
+		t->moveFunction(std::move(tf));
 
 		m_waitList.push(t);
-		createUpdateWaitListTask();
+		createSchedulerUpdateTask();
 
 		return t;
 	}
 
 	// threadsafe
 	template<typename FutureContainer>
-	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> joinHomoFutures(const FutureContainer& c/*, TaskPriority priority, const std::string& name*/) const
+	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> joinHomoFutures(const FutureContainer& c/*, const std::string& name*/) const
 	{
 		typedef std::vector<typename FutureContainer::value_type::element_type::ReturnType> ReturnType;
 
 		std::vector<std::shared_ptr<ITaskEnabler>> enablers;
 		for (auto&n : c)
-			enablers.push_back(n->enabler());
+			enablers.push_back(n->getEnabler());
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto t = std::make_shared<Task<ReturnType>>([=]
+		auto fut = p->get_future().share();
+		auto e = std::make_shared<DynamicTaskEnabler>(std::move(enablers));
+		auto t = std::make_shared<Task<ReturnType>>("joinHomoFutures");
+		auto tf = std::function<void()>([=]
 		{
 			ReturnType ret;
 			ret.reserve(c.size());
 
 			for (auto&n : c)
-				ret.push_back(n->future().get());
+				ret.push_back(n->getFuture().get());
 
 			trySetResult(*p, std::move(ret));
-		}, p->get_future().share(), std::make_shared<DynamicTaskEnabler>(std::move(enablers)), TaskPriority::Normal, "joinHomoFutures");
+			t->setStatus(Done);
+		});
+		t->movePromise(std::move(p));
+		t->moveFuture(std::move(fut));
+		t->moveEnabler(std::move(e));
+		t->moveFunction(std::move(tf));
 
 		m_waitList.push(t);
-		createUpdateWaitListTask();
+		createSchedulerUpdateTask();
 
 		return t;
 	}
@@ -313,33 +343,36 @@ private:
 
 	// threadsafe
 	template<typename Func, typename T, typename U, typename V, typename X, typename Y>
-	void pollDependencyAndCallOrResubmit(std::shared_ptr<std::promise<T>> p, std::shared_future<T> fut, Func f, const std::shared_ptr<Task<U>>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable, TaskPriority priority, const std::string& name) const
+	void pollDependencyAndCallOrResubmit(Func f, std::shared_ptr<Task<T>> t, const std::shared_ptr<Task<U>>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable) const
 	{
+		auto arg = dependency->getFuture();
+
 		// The implementations are encouraged to detect the case when valid == false before the call
 		// and throw a future_error with an error condition of future_errc::no_state. 
 		// http://en.cppreference.com/w/cpp/thread/future/wait_for
-		if (dependency->future().valid())
+		if (arg.valid())
 		{
 			// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
-			if (dependency->future()._Is_ready())
+			if (arg._Is_ready())
 			{
-				trySetFuncResult(*p, f, dependency->future(), argIsVoid, fIsVoid, argIsAssignable);
+				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
+				t->setStatus(Done);
 				return;
 			}
 
-			switch (dependency->future().wait_for(std::chrono::seconds(0)))
+			switch (arg.wait_for(std::chrono::seconds(0)))
 			{
 			default:
 			case std::future_status::ready:
-				trySetFuncResult(*p, f, dependency->future(), argIsVoid, fIsVoid, argIsAssignable);
+				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
+				t->setStatus(Done);
 				break;
 			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 			case std::future_status::timeout:
-				// "Just when I thought I was out... they pull me back in." - Michael Corleone
-				m_queue.push(std::make_shared<Task<T>>([=]
 				{
-					pollDependencyAndCallOrResubmit(p, fut, f, dependency, argIsVoid, fIsVoid, argIsAssignable, priority, name);
-				}, fut, dependency->enabler(), priority, name));
+					t->setStatus(ScheduledPolling);
+					m_queue.push(t);
+				}
 				break;
 			}
 		}
@@ -349,49 +382,62 @@ private:
 		}
 	}
 
-	void updateWaitListAndResubmit(std::shared_ptr<std::promise<void>> p, std::shared_future<void> fut, std::shared_ptr<ITaskEnabler> e) const
+	void schedulerUpdateTask(std::shared_ptr<Task<void>> t) const
 	{
-		updateWaitList();
-
-		bool expected = false;
-		if (m_updateWaitListTaskEnabled.compare_exchange_strong(expected, false))
+		bool expected = scheduleOneOrRequeueInWaitList(m_killSchedulerTask);
+		if (m_schedulerTaskEnabled.compare_exchange_strong(expected, false))
 		{
-			trySetResult(*p);
+			trySetResult(*(t->getPromise()));
+			t->setStatus(Done);
 			return;
 		}
-
-		m_queue.push(std::make_shared<Task<void>>([=]
-		{
-			updateWaitListAndResubmit(p, fut, e);
-		}, fut, e, TaskPriority::Normal, "updateWaitList"));
+		
+		t->setStatus(ScheduledPolling);
+		m_queue.push(t);
 	}
 
 	// threadsafe
-	void createUpdateWaitListTask() const
+	void createSchedulerUpdateTask() const
 	{
 		bool expected = false;
-		if (m_updateWaitListTaskEnabled.compare_exchange_strong(expected, true))
+		if (m_schedulerTaskEnabled.compare_exchange_strong(expected, true))
 		{
 			auto p = std::make_shared<std::promise<void>>();
 			auto fut = p->get_future().share();
 			auto e = std::make_shared<TaskEnabler<bool>>(true);
-			updateWaitListAndResubmit(p, fut, e);
+			auto t = std::make_shared<Task<void>>("schedulerUpdate");
+			auto tf = std::function<void()>([=]
+			{
+				schedulerUpdateTask(t);
+			});
+			t->movePromise(std::move(p));
+			t->moveFuture(std::move(fut));
+			t->moveEnabler(std::move(e));
+			t->setFunction(std::move(tf));
+			
+			m_queue.push(t);
+
 			wakeOne();
 		}
 	}
 
 	// threadsafe
-	bool updateWaitList(bool flush = false) const
+	bool scheduleOneOrRequeueInWaitList(bool forceSchedule = false) const
 	{
 		// process one element in wait list
 		std::shared_ptr<ITask> t;
 		if (m_waitList.try_pop(t))
 		{
 			assert(t.get());
-			if (*t || flush)
+			if (*t || forceSchedule)
+			{
+				t->setStatus(ScheduledOnce);
 				m_queue.push(t);
+			}
 			else
+			{
 				m_waitList.push(t);
+			}
 		}
 
 		return m_waitList.empty();
@@ -404,7 +450,8 @@ private:
 	mutable std::atomic_uint32_t m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 	mutable ConcurrentQueueType m_waitList;
-	mutable std::atomic<bool> m_updateWaitListTaskEnabled;
+	mutable std::atomic<bool> m_schedulerTaskEnabled;
+	mutable std::atomic<bool> m_killSchedulerTask;
 
 	// main thread only state
 	std::vector<std::shared_ptr<std::thread>> m_threads;

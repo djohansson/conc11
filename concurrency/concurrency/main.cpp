@@ -65,22 +65,18 @@ int main(int argc, char* argv[])
 	auto hello = scheduler.createTask([]
 	{
 		return string("hello");
-	}, TaskPriority::Normal, "hello");
+	}, "hello");
 
-	auto world = scheduler.createTask([](string s)
+	auto world = scheduler.createTask([]()
 	{
-		return s + string(" world!");
-	}, hello, TaskPriority::Normal, "world")->then(print, "hello world print");
+		return string(" world!");
+	}, "world");
 
-	/*auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
+	auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
 	{
 		return get<0>(t) + get<1>(t);
 	}, "hello world join")->then(print, "hello world print");
-	*/
-
-	hello->enable();
 	
-	/*
 	vector<shared_ptr<Task<int>>> tasks;
 	for (unsigned int i = 0; i < 20; i++)
 	{
@@ -95,27 +91,24 @@ int main(int argc, char* argv[])
 			unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
 			mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 			return i;
-		}, TaskPriority::Normal, string("mandel") + to_string(i))->then([=](int val)
+		}, string("mandel") + to_string(i))->then([=](int val)
 		{
 			unique_lock<mutex> lock(g_coutMutex);
 			cout << to_string(i) << ":[" << this_thread::get_id() << "] c" << endl;
 			return val;
 		}, string("mandel progress") + to_string(i)));
 
-		tasks.back()->enable();
+		tasks.back()->getEnabler()->enable();
 	}
 
 	auto nothing = scheduler.createTask([]
 	{
-	}, TaskPriority::High, "nothing");
-	auto zero = scheduler.createTask(&zeroFunc, nothing, TaskPriority::Low, "zero");
+	}, "nothing");
+	auto zero = scheduler.createTask(&zeroFunc, nothing, "zero");
 
 	tasks.push_back(scheduler.createTask([](int v){ return ++v; }, zero));
 	tasks.push_back(scheduler.createTask([]{ return 10; }, nothing));
 	tasks.push_back(scheduler.createTask([]{ return 100; }));
-	
-	tasks.back()->enable();
-	nothing->enable();
 
 	auto t0 = scheduler.join(tasks)->then([](vector<int> vals)
 	{
@@ -125,22 +118,24 @@ int main(int argc, char* argv[])
 	{
 		return v + 1000;
 	};
-	auto t1 = scheduler.createTask(f, t0, TaskPriority::Normal, "f")->then([](int v)
+	auto t1 = scheduler.createTask(f, t0, "f")->then([](int v)
 	{
 		return v + 10000;
 	}, "t1");
-	*/
 
-	/*
-	auto finalString = scheduler.join(helloWorld, t1)->then([](tuple<string, int> t)
+	hello->getEnabler()->enable();
+	world->getEnabler()->enable();
+	tasks.back()->getEnabler()->enable();
+	nothing->getEnabler()->enable();
+
+	/*auto finalString = scheduler.join(hello, world, t1)->then([](tuple<string, string, int> t)
 	{
-		return get<0>(t) + to_string(get<1>(t));
+		return get<0>(t) + get<1>(t) + to_string(get<2>(t));
 	}, "finalString join")->then([](string s)
 	{
 		unique_lock<mutex> lock(g_coutMutex);
 		cout << s << endl;
-	}, "finalString print");
-	*/
+	}, "finalString print");*/
 
 	return 0;
 }
