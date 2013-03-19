@@ -18,9 +18,6 @@
     <ClInclude Include="FunctionTraits.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="NonCopyable.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="TaskScheduler.h">
       <Filter>Header Files</Filter>
     </ClInclude>

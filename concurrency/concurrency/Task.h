@@ -1,7 +1,6 @@
 #pragma once
 
 #include "FunctionTraits.h"
-#include "NonCopyable.h"
 #include "TaskEnabler.h"
 #include "Types.h"
 
@@ -23,7 +22,7 @@ enum TaskStatus
 	Invalid
 };
 
-class TaskBase
+class TaskBase abstract
 {
 public:
 
@@ -40,7 +39,7 @@ protected:
 };
 
 template<typename T>
-class Task : public TaskBase, public NonCopyable
+class Task : public TaskBase
 {
 public:
 
@@ -59,7 +58,7 @@ public:
 		s_instanceCount--;
 	}
 
-	virtual void operator()()
+	virtual void operator()() final
 	{
 		assert(m_function);
 
@@ -148,19 +147,19 @@ public:
 		m_future = std::forward<std::shared_future<ReturnType>>(fut);
 	}
 
-	inline const std::shared_ptr<ITaskEnabler>& getEnabler() const
+	inline const std::shared_ptr<TaskEnablerBase>& getEnabler() const
 	{
 		return m_enabler;
 	}
 
-	inline void setEnabler(const std::shared_ptr<ITaskEnabler>& e)
+	inline void setEnabler(const std::shared_ptr<TaskEnablerBase>& e)
 	{
 		m_enabler = e;
 	}
 
-	inline void moveEnabler(std::shared_ptr<ITaskEnabler>&& e)
+	inline void moveEnabler(std::shared_ptr<TaskEnablerBase>&& e)
 	{
-		m_enabler = std::forward<std::shared_ptr<ITaskEnabler>>(e);
+		m_enabler = std::forward<std::shared_ptr<TaskEnablerBase>>(e);
 	}
 
 	template<typename Func>
@@ -201,11 +200,14 @@ public:
 
 private:
 
+	Task(const Task&);
+	Task& operator=(const Task&);
+
 	std::function<void()> m_function;
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
 	std::shared_ptr<TaskBase> m_continuation;
-	std::shared_ptr<ITaskEnabler> m_enabler;
+	std::shared_ptr<TaskEnablerBase> m_enabler;
 	std::string m_name;
 	TaskStatus m_status;
 };

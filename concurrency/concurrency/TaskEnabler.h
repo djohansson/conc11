@@ -9,7 +9,7 @@
 namespace conc11
 {
 
-struct ITaskEnabler 
+struct TaskEnablerBase abstract
 {
 	virtual operator bool() = 0;
 	virtual void enable() = 0;
@@ -19,7 +19,7 @@ template<typename T, unsigned int N = 1>
 class TaskEnabler;
 
 template<>
-class TaskEnabler<bool, 1> : public ITaskEnabler
+class TaskEnabler<bool, 1> : public TaskEnablerBase
 {
 public:
 
@@ -30,12 +30,12 @@ public:
 	virtual ~TaskEnabler()
 	{ }
 
-	virtual operator bool()
+	virtual operator bool() final
 	{
 		return m_value;
 	}
 
-	virtual void enable()
+	virtual void enable() final
 	{
 		m_value = true;
 	}
@@ -46,23 +46,23 @@ private:
 };
 
 template<unsigned int N>
-class TaskEnabler<std::shared_ptr<ITaskEnabler>, N> : public ITaskEnabler
+class TaskEnabler<std::shared_ptr<TaskEnablerBase>, N> : public TaskEnablerBase
 {
 public:
 
-	TaskEnabler(const std::array<std::shared_ptr<ITaskEnabler>, N>& deps)
+	TaskEnabler(const std::array<std::shared_ptr<TaskEnablerBase>, N>& deps)
 		: m_deps(deps)
 		, m_enabled(false)
 	{
 	}
 
-	TaskEnabler(std::array<std::shared_ptr<ITaskEnabler>, N>&& deps)
-		: m_deps(std::forward<std::array<std::shared_ptr<ITaskEnabler>, N>>(deps))
+	TaskEnabler(std::array<std::shared_ptr<TaskEnablerBase>, N>&& deps)
+		: m_deps(std::forward<std::array<std::shared_ptr<TaskEnablerBase>, N>>(deps))
 		, m_enabled(false)
 	{
 	}
 
-	TaskEnabler(std::initializer_list<std::shared_ptr<ITaskEnabler>> deps)
+	TaskEnabler(std::initializer_list<std::shared_ptr<TaskEnablerBase>> deps)
 		: m_enabled(false)
 	{
 		std::copy(deps.begin(), deps.end(), m_deps.begin());
@@ -71,7 +71,7 @@ public:
 	virtual ~TaskEnabler()
 	{ }
 
-	virtual operator bool()
+	virtual operator bool() final
 	{
 		if (m_enabled)
 			return true;
@@ -87,7 +87,7 @@ public:
 		return m_enabled;
 	}
 
-	virtual void enable()
+	virtual void enable() final
 	{
 		if (m_enabled)
 			return;
@@ -100,28 +100,28 @@ public:
 
 private:
 
-	std::array<std::shared_ptr<ITaskEnabler>, N> m_deps;
+	std::array<std::shared_ptr<TaskEnablerBase>, N> m_deps;
 	bool m_enabled;
 };
 
-class DynamicTaskEnabler : public ITaskEnabler
+class DynamicTaskEnabler : public TaskEnablerBase
 {
 public:
 
-	DynamicTaskEnabler(const std::vector<std::shared_ptr<ITaskEnabler>>& deps)
+	DynamicTaskEnabler(const std::vector<std::shared_ptr<TaskEnablerBase>>& deps)
 		: m_deps(deps)
 		, m_enabled(false)
 	{ }
 
-	DynamicTaskEnabler(std::vector<std::shared_ptr<ITaskEnabler>>&& deps)
-		: m_deps(std::forward<std::vector<std::shared_ptr<ITaskEnabler>>>(deps))
+	DynamicTaskEnabler(std::vector<std::shared_ptr<TaskEnablerBase>>&& deps)
+		: m_deps(std::forward<std::vector<std::shared_ptr<TaskEnablerBase>>>(deps))
 		, m_enabled(false)
 	{ }
 
 	virtual ~DynamicTaskEnabler()
 	{ }
 
-	virtual operator bool()
+	virtual operator bool() final
 	{
 		if (m_enabled)
 			return true;
@@ -137,7 +137,7 @@ public:
 		return m_enabled;
 	}
 
-	virtual void enable()
+	virtual void enable() final
 	{
 		if (m_enabled)
 			return;
@@ -150,7 +150,7 @@ public:
 
 private:
 
-	std::vector<std::shared_ptr<ITaskEnabler>> m_deps;
+	std::vector<std::shared_ptr<TaskEnablerBase>> m_deps;
 	bool m_enabled;
 };
 

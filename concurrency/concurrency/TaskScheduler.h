@@ -1,7 +1,6 @@
 #pragma once
 
 #include "FunctionTraits.h"
-#include "NonCopyable.h"
 #include "Task.h"
 #include "TaskUtils.h"
 #include "Types.h"
@@ -28,7 +27,7 @@ std::mutex g_coutMutex; // TEMP!!!
 template<unsigned int N>
 struct JoinAndSetTupleValueRecursive;
 
-class TaskScheduler : public NonCopyable
+class TaskScheduler
 {
 	typedef Concurrency::concurrent_queue<std::shared_ptr<TaskBase>> ConcurrentQueueType;
 	
@@ -168,18 +167,9 @@ public:
 
 	// run task chain
 	template<typename T>
-	void run(std::shared_ptr<Task<T>>& t, bool /*sync*/ = false) const
+	void run(std::shared_ptr<Task<T>>& t) const
 	{
 		t->getEnabler()->enable();
-
-		//if (sync)
-		//{
-		//	// update wait list on this thread
-		//	scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()));
-
-		//	// and join in.
-		//	waitJoin();
-		//}
 	}
 
 private:
@@ -260,12 +250,12 @@ private:
 	{
 		typedef std::tuple<T, U, Args...> ReturnType;
 
-		std::array<std::shared_ptr<ITaskEnabler>, 2+sizeof...(Args)> enablers;
+		std::array<std::shared_ptr<TaskEnablerBase>, 2+sizeof...(Args)> enablers;
 		ArraySetValueRecursive<(2+sizeof...(Args))>::invoke(enablers, f0->getEnabler(), f1->getEnabler(), fn->getEnabler()...);
 
 		auto p = std::make_shared<std::promise<ReturnType>>();
 		auto fut = p->get_future().share();
-		auto e = std::make_shared<TaskEnabler<std::shared_ptr<ITaskEnabler>, 2+sizeof...(Args)>>(std::move(enablers));
+		auto e = std::make_shared<TaskEnabler<std::shared_ptr<TaskEnablerBase>, 2+sizeof...(Args)>>(std::move(enablers));
 		auto t = std::make_shared<Task<ReturnType>>("joinHeteroFutures");
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, f0, f1, fn...]
@@ -295,7 +285,7 @@ private:
 	{
 		typedef std::vector<typename FutureContainer::value_type::element_type::ReturnType> ReturnType;
 
-		std::vector<std::shared_ptr<ITaskEnabler>> enablers;
+		std::vector<std::shared_ptr<TaskEnablerBase>> enablers;
 		for (auto&n : c)
 			enablers.push_back(n->getEnabler());
 
@@ -532,7 +522,7 @@ private:
 			t->movePromise(std::move(p));
 			t->moveFuture(std::move(fut));
 			t->moveEnabler(std::move(e));
-			t->setFunction(std::move(tf));
+			t->moveFunction(std::move(tf));
 			
 			m_queue.push(t);
 
@@ -568,6 +558,9 @@ private:
 
 		return m_waitList.empty();
 	}
+
+	TaskScheduler(const TaskScheduler&);
+	TaskScheduler& operator=(const TaskScheduler&);
 
 	// concurrent state
 	mutable std::mutex m_mutex;
