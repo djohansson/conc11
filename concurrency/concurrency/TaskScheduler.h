@@ -79,7 +79,17 @@ public:
 
 	~TaskScheduler()
 	{
-		wait();
+		// signal wait list update task to return
+		m_killSchedulerTask = false;
+
+		// flush wait list on this thread
+		while (!scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()), true));
+
+		// wake all
+		wakeAll();
+
+		// and join in.
+		waitJoin();
 		
 		// signal threads to exit
 		{
@@ -118,21 +128,6 @@ public:
 		assert(TaskBase::getInstanceCount() == 0);
 	}
 
-	void wait()
-	{
-		// signal wait list update task to return
-		m_killSchedulerTask = false;
-
-		// update wait list on this thread
-		while (!scheduleOrRequeueInWaitList(true));
-		
-		// wake all
-		wakeAll();
-
-		// and join in.
-		waitJoin();
-	}
-
 	// ReturnType Func(void) w/o dependency
 	template<typename Func>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f = Normal, const std::string& name = "") const
@@ -169,6 +164,22 @@ public:
 	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c/* = Normal, const std::string& name = ""*/) const
 	{
 		return joinHomoFutures(c/*, name*/);
+	}
+
+	// run task chain
+	template<typename T>
+	void run(std::shared_ptr<Task<T>>& t, bool /*sync*/ = false) const
+	{
+		t->getEnabler()->enable();
+
+		//if (sync)
+		//{
+		//	// update wait list on this thread
+		//	scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()));
+
+		//	// and join in.
+		//	waitJoin();
+		//}
 	}
 
 private:
@@ -337,7 +348,7 @@ private:
 		}
 	}
 
-	void waitJoin() 
+	void waitJoin() const
 	{
 		// join in on tasks until queue is empty and no consumers are running
 		while (m_taskConsumerCount > 0)
@@ -485,7 +496,7 @@ private:
 
 	void schedulerUpdateTask(std::shared_ptr<Task<void>> t) const
 	{
-		bool expected = scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_threads.size()), m_killSchedulerTask);
+		bool expected = scheduleOrRequeueInWaitList(10 * static_cast<unsigned int>(m_threads.size()), m_killSchedulerTask);
 		if (m_schedulerTaskEnabled.compare_exchange_strong(expected, false))
 		{
 			trySetResult(*(t->getPromise()));
@@ -542,6 +553,7 @@ private:
 				{
 					t->setStatus(ScheduledOnce);
 					m_queue.push(t);
+					wakeOne();
 				}
 				else
 				{

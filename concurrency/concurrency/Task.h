@@ -5,7 +5,6 @@
 #include "TaskEnabler.h"
 #include "Types.h"
 
-#include <bitset>
 #include <cassert>
 #include <functional>
 #include <future>
@@ -210,7 +209,5 @@ private:
 	std::string m_name;
 	TaskStatus m_status;
 };
-
-unsigned int TaskBase::s_instanceCount = 0;
 
 } // namespace conc11

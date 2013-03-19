@@ -11,8 +11,8 @@ namespace conc11
 
 struct ITaskEnabler 
 {
-	virtual operator bool() const = 0;
-	virtual bool enable() = 0;
+	virtual operator bool() = 0;
+	virtual void enable() = 0;
 };
 
 template<typename T, unsigned int N = 1>
@@ -27,16 +27,17 @@ public:
 		: m_value(value)
 	{ }
 
-	virtual operator bool() const
+	virtual ~TaskEnabler()
+	{ }
+
+	virtual operator bool()
 	{
 		return m_value;
 	}
 
-	virtual bool enable()
+	virtual void enable()
 	{
 		m_value = true;
-
-		return m_value;
 	}
 
 private:
@@ -51,37 +52,56 @@ public:
 
 	TaskEnabler(const std::array<std::shared_ptr<ITaskEnabler>, N>& deps)
 		: m_deps(deps)
+		, m_enabled(false)
 	{
 	}
 
 	TaskEnabler(std::array<std::shared_ptr<ITaskEnabler>, N>&& deps)
 		: m_deps(std::forward<std::array<std::shared_ptr<ITaskEnabler>, N>>(deps))
+		, m_enabled(false)
 	{
 	}
 
 	TaskEnabler(std::initializer_list<std::shared_ptr<ITaskEnabler>> deps)
+		: m_enabled(false)
 	{
 		std::copy(deps.begin(), deps.end(), m_deps.begin());
 	}
 
-	virtual operator bool() const
+	virtual ~TaskEnabler()
+	{ }
+
+	virtual operator bool()
 	{
+		if (m_enabled)
+			return true;
+
 		bool result(true);
 		
 		for (auto& n : m_deps)
 			result &= *n;
+
+		if (result)
+			m_enabled = true;
 		
-		return result;
+		return m_enabled;
 	}
 
-	virtual bool enable()
+	virtual void enable()
 	{
-		return false;
+		if (m_enabled)
+			return;
+
+		for (auto& n : m_deps)
+			n->enable();
+
+		m_enabled = true;
 	}
 
 private:
 
 	std::array<std::shared_ptr<ITaskEnabler>, N> m_deps;
+	bool m_enabled;
 };
 
 class DynamicTaskEnabler : public ITaskEnabler
@@ -90,30 +110,48 @@ public:
 
 	DynamicTaskEnabler(const std::vector<std::shared_ptr<ITaskEnabler>>& deps)
 		: m_deps(deps)
+		, m_enabled(false)
 	{ }
 
 	DynamicTaskEnabler(std::vector<std::shared_ptr<ITaskEnabler>>&& deps)
 		: m_deps(std::forward<std::vector<std::shared_ptr<ITaskEnabler>>>(deps))
+		, m_enabled(false)
 	{ }
 
-	virtual operator bool() const
+	virtual ~DynamicTaskEnabler()
+	{ }
+
+	virtual operator bool()
 	{
+		if (m_enabled)
+			return true;
+
 		bool result(true);
 
 		for (auto& n : m_deps)
-			result &= (*n);
+			result &= *n;
 
-		return result;
+		if (result)
+			m_enabled = true;
+
+		return m_enabled;
 	}
 
-	virtual bool enable()
+	virtual void enable()
 	{
-		return false;
+		if (m_enabled)
+			return;
+
+		for (auto& n : m_deps)
+			n->enable();
+
+		m_enabled = true;
 	}
 
 private:
 
 	std::vector<std::shared_ptr<ITaskEnabler>> m_deps;
+	bool m_enabled;
 };
 
 } // namespace conc11

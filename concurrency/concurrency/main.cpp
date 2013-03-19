@@ -69,16 +69,16 @@ int main(int argc, char* argv[])
 
 	auto world = scheduler.createTask([]()
 	{
-		return string(" world!");
+		return string(" world!\n");
 	}, "world");
 
 	auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
 	{
 		return get<0>(t) + get<1>(t);
-	}, "hello world join")->then(print, "hello world print");
+	}, "hello world merge");
 	
 	vector<shared_ptr<Task<int>>> tasks;
-	for (unsigned int i = 0; i < 200; i++)
+	for (unsigned int i = 0; i < 2000; i++)
 	{
 		tasks.push_back(scheduler.createTask([=]
 		{
@@ -97,8 +97,6 @@ int main(int argc, char* argv[])
 			cout << to_string(i) << ":[" << this_thread::get_id() << "] c" << endl;
 			return val;
 		}, string("mandel progress") + to_string(i)));
-
-		tasks.back()->getEnabler()->enable();
 	}
 
 	auto nothing = scheduler.createTask([]
@@ -123,19 +121,12 @@ int main(int argc, char* argv[])
 		return v + 10000;
 	}, "t1");
 
-	hello->getEnabler()->enable();
-	world->getEnabler()->enable();
-	tasks.back()->getEnabler()->enable();
-	nothing->getEnabler()->enable();
+	auto finalString = scheduler.join(helloWorld, t1)->then([](tuple<string, int> t)
+	{
+		return get<0>(t) + to_string(get<1>(t));
+	}, "finalString join")->then(print, "finalString print");
 
-	/*auto finalString = scheduler.join(hello, world, t1)->then([](tuple<string, string, int> t)
-	{
-		return get<0>(t) + get<1>(t) + to_string(get<2>(t));
-	}, "finalString join")->then([](string s)
-	{
-		unique_lock<mutex> lock(g_coutMutex);
-		cout << s << endl;
-	}, "finalString print");*/
+	scheduler.run(finalString);
 
 	return 0;
 }
