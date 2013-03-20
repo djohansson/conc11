@@ -75,12 +75,14 @@ int main(int argc, char* argv[])
 	auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
 	{
 		return get<0>(t) + get<1>(t);
-	}, "hello world merge");
+	}, "hello world merge")->then(print, "hello world print");
+
+	scheduler.run(helloWorld, true);
 	
 	vector<shared_ptr<Task<int>>> tasks;
-	for (unsigned int i = 0; i < 2000; i++)
+	for (unsigned int i = 0; i < 1000; i++)
 	{
-		tasks.push_back(scheduler.createTask([=]
+		tasks.push_back(scheduler.createTask([i]
 		{
 			{
 				unique_lock<mutex> lock(g_coutMutex);
@@ -91,7 +93,7 @@ int main(int argc, char* argv[])
 			unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
 			mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 			return i;
-		}, string("mandel") + to_string(i))->then([=](int val)
+		}, string("mandel") + to_string(i))->then([i](int val)
 		{
 			unique_lock<mutex> lock(g_coutMutex);
 			cout << to_string(i) << ":[" << this_thread::get_id() << "] c" << endl;
@@ -121,9 +123,9 @@ int main(int argc, char* argv[])
 		return v + 10000;
 	}, "t1");
 
-	auto finalString = scheduler.join(helloWorld, t1)->then([](tuple<string, int> t)
+	auto finalString = scheduler.join(t0, t1)->then([](tuple<int, int> t)
 	{
-		return get<0>(t) + to_string(get<1>(t));
+		return to_string(get<0>(t)) + to_string(get<1>(t));
 	}, "finalString join")->then(print, "finalString print");
 
 	scheduler.run(finalString);

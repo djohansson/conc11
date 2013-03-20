@@ -4,6 +4,7 @@
 #include "TaskEnabler.h"
 #include "Types.h"
 
+#include <atomic>
 #include <cassert>
 #include <functional>
 #include <future>
@@ -45,9 +46,12 @@ public:
 
 	typedef T ReturnType;
 
-	Task(const std::string& name = "")
+	Task(const std::string& name = "", bool isReentrantAndRecallable = false)
 		: m_name(name)
 		, m_status(Unscheduled)
+		, m_isReentrantAndRecallable(isReentrantAndRecallable)
+		, m_reentrancyFlag(isReentrantAndRecallable)
+		, m_reentrancyAssertEnable(true)
 	{
 		s_instanceCount++;
 	}
@@ -60,14 +64,22 @@ public:
 
 	virtual void operator()() final
 	{
-		assert(m_function);
+		bool expected = m_isReentrantAndRecallable;
+		if (m_reentrancyFlag.compare_exchange_strong(expected, true))
+		{
+			assert(m_function);
 
-		m_function();
+			m_function();
 
-		assert(m_status != Invalid);
-		
-		if (m_status == Done && m_continuation && *m_continuation)
-			(*m_continuation)();
+			assert(m_status != Invalid);
+
+			if (m_status == Done && m_continuation && *m_continuation)
+				(*m_continuation)();
+		}
+		else if (!m_isReentrantAndRecallable && m_reentrancyAssertEnable)
+		{
+			assert(false);
+		}
 	}
 
 	virtual operator bool() const
@@ -85,6 +97,16 @@ public:
 	virtual void setStatus(TaskStatus status)
 	{
 		m_status = status;
+	}
+
+	inline bool getReeintrancyAssertEnable() const
+	{
+		return m_reentrancyAssertEnable;
+	}
+
+	inline void setReentrancyAssertEnable(bool enable)
+	{
+		m_reentrancyAssertEnable = enable;
 	}
 
 	inline const std::function<void()>& getFunction() const
@@ -210,6 +232,9 @@ private:
 	std::shared_ptr<TaskEnablerBase> m_enabler;
 	std::string m_name;
 	TaskStatus m_status;
+	bool m_isReentrantAndRecallable;
+	bool m_reentrancyAssertEnable;
+	std::atomic<bool> m_reentrancyFlag;
 };
 
 } // namespace conc11

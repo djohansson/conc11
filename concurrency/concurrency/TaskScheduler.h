@@ -37,7 +37,7 @@ public:
 		: m_running(true)
 		, m_taskConsumerCount(threadCount)
 		, m_schedulerTaskEnabled(false)
-		, m_killSchedulerTask(false)
+		, m_flushWaitList(false)
 	{
 		for (unsigned int i = 0; i < threadCount; i++)
 		{
@@ -78,18 +78,8 @@ public:
 
 	~TaskScheduler()
 	{
-		// signal wait list update task to return
-		m_killSchedulerTask = false;
+		enableAllAndSync();
 
-		// flush wait list on this thread
-		while (!scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()), true));
-
-		// wake all
-		wakeAll();
-
-		// and join in.
-		waitJoin();
-		
 		// signal threads to exit
 		{
 			auto p = std::make_shared<std::promise<void>>();
@@ -153,23 +143,38 @@ public:
 
 	// join heterogeneous tasks
 	template<typename T, typename U, typename... Args>
-	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/* = Normal, const std::string& name = ""*/) const
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
 	{
-		return joinHeteroFutures(f0, f1, fn.../*, name*/);
+		return joinHeteroFutures(f0, f1, fn...);
 	}
 
 	// join homogeneous tasks
 	template<typename FutureContainer>
-	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c/* = Normal, const std::string& name = ""*/) const
+	std::shared_ptr<Task<std::vector<typename FutureContainer::value_type::element_type::ReturnType>>> join(const FutureContainer& c) const
 	{
-		return joinHomoFutures(c/*, name*/);
+		return joinHomoFutures(c);
 	}
 
-	// run task chain
+	// execute task chain
 	template<typename T>
-	void run(std::shared_ptr<Task<T>>& t) const
+	void run(const std::shared_ptr<Task<T>>& t, bool sync = false, bool syncWaitJoin = true) const
 	{
 		t->getEnabler()->enable();
+		
+		if (sync)
+		{
+			if (syncWaitJoin)
+			{
+				waitJoin(t);
+			}
+			else
+			{
+				bool reentrancyAssertEnable = t->getReeintrancyAssertEnable();
+				t->setReentrancyAssertEnable(false);
+				(*t)();
+				t->setReentrancyAssertEnable(reentrancyAssertEnable);
+			}
+		}
 	}
 
 private:
@@ -215,7 +220,7 @@ private:
 		auto p = std::make_shared<std::promise<ReturnType>>();
 		auto fut = p->get_future().share();
 		auto e = dependency->getEnabler();
-		auto t = std::make_shared<Task<ReturnType>>(name);
+		auto t = std::make_shared<Task<ReturnType>>(name, true);
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, f, dependency, argIsVoid, fIsVoid, argIsAssignable]
 		{
@@ -256,7 +261,7 @@ private:
 		auto p = std::make_shared<std::promise<ReturnType>>();
 		auto fut = p->get_future().share();
 		auto e = std::make_shared<TaskEnabler<std::shared_ptr<TaskEnablerBase>, 2+sizeof...(Args)>>(std::move(enablers));
-		auto t = std::make_shared<Task<ReturnType>>("joinHeteroFutures");
+		auto t = std::make_shared<Task<ReturnType>>("joinHeteroFutures", true);
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, f0, f1, fn...]
 		{
@@ -292,7 +297,7 @@ private:
 		auto p = std::make_shared<std::promise<ReturnType>>();
 		auto fut = p->get_future().share();
 		auto e = std::make_shared<DynamicTaskEnabler>(std::move(enablers));
-		auto t = std::make_shared<Task<ReturnType>>("joinHomoFutures");
+		auto t = std::make_shared<Task<ReturnType>>("joinHomoFutures", true);
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, c]
 		{
@@ -326,7 +331,6 @@ private:
 			{
 				assert(t.get() && *t);
 				(*t)();
-				std::this_thread::yield();
 			}
 			else
 			{
@@ -335,23 +339,6 @@ private:
 				m_cv.wait(lock);
 				m_taskConsumerCount++;
 			}
-		}
-	}
-
-	void waitJoin() const
-	{
-		// join in on tasks until queue is empty and no consumers are running
-		while (m_taskConsumerCount > 0)
-		{
-			std::shared_ptr<TaskBase> t;
-			while (m_queue.try_pop(t))
-			{
-				assert(t.get() && *t);
-				(*t)();
-				std::this_thread::yield();
-			}
-
-			std::this_thread::yield();
 		}
 	}
 
@@ -377,27 +364,27 @@ private:
 		// http://en.cppreference.com/w/cpp/thread/future/wait_for
 		if (arg.valid())
 		{
-			// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
-			if (arg._Is_ready())
-			{
-				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
-				t->setStatus(Done);
-				return;
-			}
-
 			switch (arg.wait_for(std::chrono::seconds(0)))
 			{
-			default:
 			case std::future_status::ready:
 				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
 				t->setStatus(Done);
 				break;
 			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 			case std::future_status::timeout:
+				if (arg._Is_ready()) // broken std::future_status::deferred temp workaround
+				{
+					trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
+					t->setStatus(Done);
+				}
+				else
 				{
 					t->setStatus(ScheduledPolling);
 					m_queue.push(t);
 				}
+				break;
+			default:
+				assert(false);
 				break;
 			}
 		}
@@ -439,24 +426,28 @@ private:
 		for (auto&n : c)
 		{
 			auto fut = n->getFuture();
+
+			// The implementations are encouraged to detect the case when valid == false before the call
+			// and throw a future_error with an error condition of future_errc::no_state. 
+			// http://en.cppreference.com/w/cpp/thread/future/wait_for
 			if (fut.valid())
 			{
-				// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
-				if (fut._Is_ready())
-				{
-					ret.push_back(fut.get());
-					continue;
-				}
-
 				switch (fut.wait_for(std::chrono::seconds(0)))
 				{
-				default:
 				case std::future_status::ready:
 					ret.push_back(fut.get());
 					continue;
 				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 				case std::future_status::timeout:
+					if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
+					{
+						ret.push_back(fut.get());
+						continue;
+					}
 					status = ScheduledPolling;
+					break;
+				default:
+					assert(false);
 					break;
 				}
 			}
@@ -486,8 +477,8 @@ private:
 
 	void schedulerUpdateTask(std::shared_ptr<Task<void>> t) const
 	{
-		bool expected = scheduleOrRequeueInWaitList(10 * static_cast<unsigned int>(m_threads.size()), m_killSchedulerTask);
-		if (m_schedulerTaskEnabled.compare_exchange_strong(expected, false))
+		bool waitListIsEmpty = scheduleOrRequeueInWaitList(10 * static_cast<unsigned int>(m_threads.size()), m_flushWaitList);
+		if (m_schedulerTaskEnabled.compare_exchange_strong(waitListIsEmpty, false))
 		{
 			trySetResult(*(t->getPromise()));
 			t->setStatus(Done);
@@ -506,7 +497,7 @@ private:
 			auto p = std::make_shared<std::promise<void>>();
 			auto fut = p->get_future().share();
 			auto e = std::make_shared<TaskEnabler<bool>>(true);
-			auto t = std::make_shared<Task<void>>("schedulerUpdate");
+			auto t = std::make_shared<Task<void>>("schedulerUpdate", true);
 			std::weak_ptr<Task<void>> tw = t;
 			auto tf = std::function<void()>([this, tw]
 			{
@@ -525,7 +516,6 @@ private:
 			t->moveFunction(std::move(tf));
 			
 			m_queue.push(t);
-
 			wakeOne();
 		}
 	}
@@ -538,7 +528,7 @@ private:
 			std::shared_ptr<TaskBase> t;
 			if (m_waitList.try_pop(t))
 			{
-				assert(t.get());
+				assert(t.get() != nullptr);
 				if (*t || forceSchedule)
 				{
 					t->setStatus(ScheduledOnce);
@@ -559,6 +549,57 @@ private:
 		return m_waitList.empty();
 	}
 
+	template<typename T = void>
+	void waitJoin(std::shared_ptr<Task<T>> t = std::shared_ptr<Task<T>>()) const
+	{
+		// join in on tasks until queue is empty and no consumers are running
+		while (m_taskConsumerCount > 0)
+		{
+			if (t.get() != nullptr)
+			{
+				auto fut = t->getFuture();
+				// The implementations are encouraged to detect the case when valid == false before the call
+				// and throw a future_error with an error condition of future_errc::no_state. 
+				// http://en.cppreference.com/w/cpp/thread/future/wait_for
+				if (fut.valid())
+				{
+					switch (fut.wait_for(std::chrono::seconds(0)))
+					{
+					case std::future_status::ready:
+						return;
+					case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
+					case std::future_status::timeout:
+						if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
+							return;
+						break;
+					default:
+						assert(false);
+						break;
+					}
+				}
+			}
+
+			std::shared_ptr<TaskBase> t;
+			while (m_queue.try_pop(t))
+			{
+				assert(t.get() != nullptr && *t);
+				(*t)();
+			}
+		}
+	}
+
+	void enableAllAndSync() 
+	{
+		// flushing the wait list will make the polling wait list update task to stop and return
+		m_flushWaitList = false;
+
+		// flush wait list on this thread
+		while (!scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()), true));
+
+		// and join in.
+		waitJoin();
+	}
+
 	TaskScheduler(const TaskScheduler&);
 	TaskScheduler& operator=(const TaskScheduler&);
 
@@ -570,7 +611,7 @@ private:
 	mutable std::atomic_uint32_t m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 	mutable std::atomic<bool> m_schedulerTaskEnabled;
-	mutable std::atomic<bool> m_killSchedulerTask;
+	mutable std::atomic<bool> m_flushWaitList;
 
 	// main thread only state
 	std::vector<std::shared_ptr<std::thread>> m_threads;
@@ -583,7 +624,7 @@ struct JoinAndSetTupleValueRecursive
 public:
 
 	template <typename T, typename... Args, unsigned int I=0>
-	inline static TaskStatus invoke(T& ret, const Args&... fn)
+	__forceinline static TaskStatus invoke(T& ret, const Args&... fn)
 	{
 		return JoinAndSetValueRecursiveImpl<I>::invoke(ret, fn...);
 	}
@@ -594,32 +635,37 @@ private:
 	struct JoinAndSetValueRecursiveImpl
 	{
 		template<typename U, typename V, typename... X>
-		inline static TaskStatus invoke(U& ret, const V& f0, const X&... fn)
+		static TaskStatus invoke(U& ret, const V& f0, const X&... fn)
 		{
+			// The implementations are encouraged to detect the case when valid == false before the call
+			// and throw a future_error with an error condition of future_errc::no_state. 
+			// http://en.cppreference.com/w/cpp/thread/future/wait_for
 			if (f0.valid())
 			{
-				// std::future_status::deferred is broken in VS2012, therefore we need to do this test here.
-				if (f0._Is_ready())
-				{
-					std::get<I>(ret) = f0.get();
-					return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
-				}
-
 				switch (f0.wait_for(std::chrono::seconds(0)))
 				{
-				default:
 				case std::future_status::ready:
 					std::get<I>(ret) = f0.get();
 					return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
 				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 				case std::future_status::timeout:
+					if (f0._Is_ready()) // broken std::future_status::deferred temp workaround
+					{
+						std::get<I>(ret) = f0.get();
+						return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
+					}
 					return ScheduledPolling;
+				default:
+					assert(false);
+					break;
 				}
 			}
 			else
 			{
 				throw std::future_error(std::future_errc::no_state, "broken dependency");
 			}
+
+			return Invalid;
 		}
 	};
 
@@ -627,7 +673,7 @@ private:
 	struct JoinAndSetValueRecursiveImpl<N>
 	{
 		template<typename U, typename... X>
-		inline static TaskStatus invoke(U&, const X&...)
+		__forceinline static TaskStatus invoke(U&, const X&...)
 		{
 			return Done;
 		}
