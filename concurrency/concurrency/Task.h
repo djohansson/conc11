@@ -16,11 +16,11 @@ namespace conc11
 
 enum TaskStatus
 {
-	Unscheduled,
-	ScheduledOnce,
-	ScheduledPolling,
-	Done,
-	Invalid
+	TsUnscheduled,
+	TsScheduledOnce,
+	TsScheduledPolling,
+	TsDone,
+	TsInvalid
 };
 
 class TaskBase abstract
@@ -48,17 +48,16 @@ public:
 
 	Task(const std::string& name = "", bool isReentrantAndRecallable = false)
 		: m_name(name)
-		, m_status(Unscheduled)
+		, m_status(TsUnscheduled)
 		, m_isReentrantAndRecallable(isReentrantAndRecallable)
 		, m_reentrancyFlag(isReentrantAndRecallable)
-		, m_reentrancyAssertEnable(true)
 	{
 		s_instanceCount++;
 	}
 
 	virtual ~Task()
 	{
-		assert(m_status != ScheduledOnce || m_status != ScheduledPolling);
+		assert(m_status != TsScheduledOnce || m_status != TsScheduledPolling);
 		s_instanceCount--;
 	}
 
@@ -71,12 +70,12 @@ public:
 
 			m_function();
 
-			assert(m_status != Invalid);
+			assert(m_status != TsInvalid);
 
-			if (m_status == Done && m_continuation && *m_continuation)
+			if (m_status == TsDone && m_continuation && *m_continuation)
 				(*m_continuation)();
 		}
-		else if (!m_isReentrantAndRecallable && m_reentrancyAssertEnable)
+		else if (!m_isReentrantAndRecallable)
 		{
 			assert(false);
 		}
@@ -97,16 +96,6 @@ public:
 	virtual void setStatus(TaskStatus status)
 	{
 		m_status = status;
-	}
-
-	inline bool getReeintrancyAssertEnable() const
-	{
-		return m_reentrancyAssertEnable;
-	}
-
-	inline void setReentrancyAssertEnable(bool enable)
-	{
-		m_reentrancyAssertEnable = enable;
 	}
 
 	inline const std::function<void()>& getFunction() const
@@ -202,7 +191,7 @@ public:
 					std::is_void<FunctionTraits<Func>::ReturnType>(),
 					std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
 
-				t->setStatus(Done);
+				t->setStatus(TsDone);
 			}
 			else
 			{

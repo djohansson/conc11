@@ -22,6 +22,12 @@
 namespace conc11
 {
 
+enum TaskRunMode
+{
+	TrmAsync,
+	TrmSyncJoin,
+};
+
 std::mutex g_coutMutex; // TEMP!!!
 
 template<unsigned int N>
@@ -93,7 +99,7 @@ public:
 				{
 					m_running = false;
 					t->getPromise()->set_value();
-					t->setStatus(Done);
+					t->setStatus(TsDone);
 				}
 				else
 				{
@@ -157,24 +163,14 @@ public:
 
 	// execute task chain
 	template<typename T>
-	void run(const std::shared_ptr<Task<T>>& t, bool sync = false, bool syncWaitJoin = true) const
+	void run(const std::shared_ptr<Task<T>>& t, TaskRunMode mode = TrmAsync) const
 	{
+		assert(!(*t->getEnabler()));
+
 		t->getEnabler()->enable();
-		
-		if (sync)
-		{
-			if (syncWaitJoin)
-			{
-				waitJoin(t);
-			}
-			else
-			{
-				bool reentrancyAssertEnable = t->getReeintrancyAssertEnable();
-				t->setReentrancyAssertEnable(false);
-				(*t)();
-				t->setReentrancyAssertEnable(reentrancyAssertEnable);
-			}
-		}
+
+		if (mode == TrmSyncJoin)
+			waitJoin(t);
 	}
 
 private:
@@ -194,7 +190,7 @@ private:
 			if (auto t = tw.lock())
 			{
 				trySetFuncResult(*(t->getPromise()), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
-				t->setStatus(Done);
+				t->setStatus(TsDone);
 			}
 			else
 			{
@@ -368,18 +364,18 @@ private:
 			{
 			case std::future_status::ready:
 				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
-				t->setStatus(Done);
+				t->setStatus(TsDone);
 				break;
 			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 			case std::future_status::timeout:
 				if (arg._Is_ready()) // broken std::future_status::deferred temp workaround
 				{
 					trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
-					t->setStatus(Done);
+					t->setStatus(TsDone);
 				}
 				else
 				{
-					t->setStatus(ScheduledPolling);
+					t->setStatus(TsScheduledPolling);
 					m_queue.push(t);
 				}
 				break;
@@ -402,11 +398,11 @@ private:
 
 		switch (status)
 		{
-		case Done:
+		case TsDone:
 			trySetResult(*(t->getPromise()), std::move(ret));
 			t->setStatus(status);
 			break;
-		case ScheduledPolling:
+		case TsScheduledPolling:
 			t->setStatus(status);
 			m_queue.push(t);
 			break;
@@ -421,7 +417,7 @@ private:
 		T ret;
 		ret.reserve(c.size());
 
-		TaskStatus status = Done;
+		TaskStatus status = TsDone;
 
 		for (auto&n : c)
 		{
@@ -444,7 +440,7 @@ private:
 						ret.push_back(fut.get());
 						continue;
 					}
-					status = ScheduledPolling;
+					status = TsScheduledPolling;
 					break;
 				default:
 					assert(false);
@@ -456,17 +452,17 @@ private:
 				throw std::future_error(std::future_errc::no_state, "broken dependency");
 			}
 
-			if (status != Done)
+			if (status != TsDone)
 				break;
 		}
 
 		switch (status)
 		{
-		case Done:
+		case TsDone:
 			trySetResult(*(t->getPromise()), std::move(ret));
 			t->setStatus(status);
 			break;
-		case ScheduledPolling:
+		case TsScheduledPolling:
 			t->setStatus(status);
 			m_queue.push(t);
 			break;
@@ -481,11 +477,11 @@ private:
 		if (m_schedulerTaskEnabled.compare_exchange_strong(waitListIsEmpty, false))
 		{
 			trySetResult(*(t->getPromise()));
-			t->setStatus(Done);
+			t->setStatus(TsDone);
 			return;
 		}
 		
-		t->setStatus(ScheduledPolling);
+		t->setStatus(TsScheduledPolling);
 		m_queue.push(t);
 	}
 
@@ -531,7 +527,7 @@ private:
 				assert(t.get() != nullptr);
 				if (*t || forceSchedule)
 				{
-					t->setStatus(ScheduledOnce);
+					t->setStatus(TsScheduledOnce);
 					m_queue.push(t);
 					wakeOne();
 				}
@@ -654,7 +650,7 @@ private:
 						std::get<I>(ret) = f0.get();
 						return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
 					}
-					return ScheduledPolling;
+					return TsScheduledPolling;
 				default:
 					assert(false);
 					break;
@@ -665,7 +661,7 @@ private:
 				throw std::future_error(std::future_errc::no_state, "broken dependency");
 			}
 
-			return Invalid;
+			return TsInvalid;
 		}
 	};
 
@@ -675,7 +671,7 @@ private:
 		template<typename U, typename... X>
 		__forceinline static TaskStatus invoke(U&, const X&...)
 		{
-			return Done;
+			return TsDone;
 		}
 	};
 };

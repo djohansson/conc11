@@ -77,7 +77,7 @@ int main(int argc, char* argv[])
 		return get<0>(t) + get<1>(t);
 	}, "hello world merge")->then(print, "hello world print");
 
-	scheduler.run(helloWorld, true);
+	scheduler.run(helloWorld, TrmSyncJoin);
 	
 	vector<shared_ptr<Task<int>>> tasks;
 	for (unsigned int i = 0; i < 1000; i++)
@@ -123,12 +123,12 @@ int main(int argc, char* argv[])
 		return v + 10000;
 	}, "t1");
 
+	scheduler.run(t1, TrmSyncJoin);
+
 	auto finalString = scheduler.join(t0, t1)->then([](tuple<int, int> t)
 	{
 		return to_string(get<0>(t)) + to_string(get<1>(t));
-	}, "finalString join")->then(print, "finalString print");
-
-	scheduler.run(finalString);
+	}, "finalString merge")->then(print, "finalString print");
 
 	return 0;
 }
