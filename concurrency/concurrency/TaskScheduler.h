@@ -92,19 +92,12 @@ public:
 			auto fut = p->get_future().share();
 			auto e = std::make_shared<TaskEnabler<bool>>(true);
 			auto t = std::make_shared<Task<void>>("killThreads");
-			std::weak_ptr<Task<void>> tw = t;
-			auto tf = std::function<void()>([this, tw]
+			Task<void>& tref = *t;
+			auto tf = std::function<void()>([this, &tref]
 			{
-				if (auto t = tw.lock())
-				{
-					m_running = false;
-					t->getPromise()->set_value();
-					t->setStatus(TsDone);
-				}
-				else
-				{
-					assert(false);
-				}
+				m_running = false;
+				tref.getPromise()->set_value();
+				tref.setStatus(TsDone);
 			});
 			t->movePromise(std::move(p));
 			t->moveFuture(std::move(fut));
@@ -184,18 +177,11 @@ private:
 		auto fut = p->get_future().share();
 		auto e = std::make_shared<TaskEnabler<bool>>(false);
 		auto t = std::make_shared<Task<ReturnType>>(name);
-		std::weak_ptr<Task<ReturnType>> tw = t;
-		auto tf = std::function<void()>([tw, f, argIsVoid, fIsVoid]
+		Task<ReturnType>& tref = *t;
+		auto tf = std::function<void()>([&tref, f, argIsVoid, fIsVoid]
 		{
-			if (auto t = tw.lock())
-			{
-				trySetFuncResult(*(t->getPromise()), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
-				t->setStatus(TsDone);
-			}
-			else
-			{
-				assert(false);
-			}
+			trySetFuncResult(*tref.getPromise(), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
+			tref.setStatus(TsDone);
 		});
 		t->movePromise(std::move(p));
 		t->moveFuture(std::move(fut));
@@ -351,7 +337,7 @@ private:
 	}
 
 	template<typename Func, typename T, typename U, typename V, typename X, typename Y>
-	void pollDependencyAndCallOrResubmit(Func f, std::shared_ptr<Task<T>> t, const std::shared_ptr<Task<U>>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable) const
+	void pollDependencyAndCallOrResubmit(Func f, std::shared_ptr<Task<T>>& t, const std::shared_ptr<Task<U>>& dependency, V argIsVoid, X fIsVoid, Y argIsAssignable) const
 	{
 		auto arg = dependency->getFuture();
 
@@ -391,7 +377,7 @@ private:
 	}
 
 	template<typename T, typename U, typename V, typename... Args>
-	void pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>> t, const std::shared_ptr<Task<U>>& f0, const std::shared_ptr<Task<V>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
+	void pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>>& t, const std::shared_ptr<Task<U>>& f0, const std::shared_ptr<Task<V>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
 	{
 		std::tuple<U, V, Args...> ret;
 		TaskStatus status = JoinAndSetTupleValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0->getFuture(), f1->getFuture(), fn->getFuture()...);
@@ -412,7 +398,7 @@ private:
 	}
 
 	template<typename T, typename FutureContainer>
-	void pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>> t, const FutureContainer& c) const
+	void pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>>& t, const FutureContainer& c) const
 	{
 		T ret;
 		ret.reserve(c.size());
@@ -471,7 +457,7 @@ private:
 		}
 	}
 
-	void schedulerUpdateTask(std::shared_ptr<Task<void>> t) const
+	void schedulerUpdateTask(std::shared_ptr<Task<void>>& t) const
 	{
 		bool waitListIsEmpty = scheduleOrRequeueInWaitList(10 * static_cast<unsigned int>(m_threads.size()), m_flushWaitList);
 		if (m_schedulerTaskEnabled.compare_exchange_strong(waitListIsEmpty, false))
@@ -546,7 +532,7 @@ private:
 	}
 
 	template<typename T = void>
-	void waitJoin(std::shared_ptr<Task<T>> t = std::shared_ptr<Task<T>>()) const
+	void waitJoin(const std::shared_ptr<Task<T>>& t = std::shared_ptr<Task<T>>()) const
 	{
 		// join in on tasks until queue is empty and no consumers are running
 		while (m_taskConsumerCount > 0)
@@ -575,22 +561,22 @@ private:
 				}
 			}
 
-			std::shared_ptr<TaskBase> t;
-			while (m_queue.try_pop(t))
+			std::shared_ptr<TaskBase> qt;
+			while (m_queue.try_pop(qt))
 			{
-				assert(t.get() != nullptr && *t);
-				(*t)();
+				assert(qt.get() != nullptr && *qt);
+				(*qt)();
 			}
 		}
 	}
 
 	void enableAllAndSync() 
 	{
-		// flushing the wait list will make the polling wait list update task to stop and return
-		m_flushWaitList = false;
+		// flushing the wait list will make the polling wait list update task return
+		m_flushWaitList = true;
 
-		// flush wait list on this thread
-		while (!scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()), true));
+		// help out flushing on this thread
+		while (!scheduleOrRequeueInWaitList(static_cast<unsigned int>(m_waitList.unsafe_size()), m_flushWaitList));
 
 		// and join in.
 		waitJoin();
@@ -620,7 +606,7 @@ struct JoinAndSetTupleValueRecursive
 public:
 
 	template <typename T, typename... Args, unsigned int I=0>
-	__forceinline static TaskStatus invoke(T& ret, const Args&... fn)
+	inline static TaskStatus invoke(T& ret, const Args&... fn)
 	{
 		return JoinAndSetValueRecursiveImpl<I>::invoke(ret, fn...);
 	}
@@ -669,7 +655,7 @@ private:
 	struct JoinAndSetValueRecursiveImpl<N>
 	{
 		template<typename U, typename... X>
-		__forceinline static TaskStatus invoke(U&, const X&...)
+		inline static TaskStatus invoke(U&, const X&...)
 		{
 			return TsDone;
 		}

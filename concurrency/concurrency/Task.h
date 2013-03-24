@@ -181,22 +181,15 @@ public:
 		auto p = std::make_shared<std::promise<ThenReturnType>>();
 		auto fut = p->get_future().share();
 		auto t = std::make_shared<Task<ThenReturnType>>(name);
-		std::weak_ptr<Task<ThenReturnType>> tw = t;
-		auto tf = std::function<void()>([this, tw, f]
+		Task<ThenReturnType>& tref = *t;
+		auto tf = std::function<void()>([this, &tref, f]
 		{
-			if (auto t = tw.lock())
-			{
-				trySetFuncResult(*(t->getPromise()), f, m_future,
-					std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-					std::is_void<FunctionTraits<Func>::ReturnType>(),
-					std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
+			trySetFuncResult(*tref.getPromise(), f, m_future,
+				std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
+				std::is_void<FunctionTraits<Func>::ReturnType>(),
+				std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
 
-				t->setStatus(TsDone);
-			}
-			else
-			{
-				assert(false);
-			}
+			tref.setStatus(TsDone);
 		});
 		
 		t->movePromise(std::move(p));
