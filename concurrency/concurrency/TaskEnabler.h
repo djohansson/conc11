@@ -9,7 +9,7 @@
 namespace conc11
 {
 
-struct TaskEnablerBase abstract
+struct TaskEnablerBase /*abstract*/
 {
 	virtual operator bool() = 0;
 	virtual void enable() = 0;

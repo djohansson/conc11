@@ -5,10 +5,15 @@
 #include "TaskUtils.h"
 #include "Types.h"
 
+#if (_MSC_VER >= 1600)
 #include <concurrent_queue.h>
+#else
+#include <tbb/concurrent_queue.h>
+#endif
 
 #include <atomic>
 #include <cassert>
+#include <condition_variable>
 #include <exception>
 #include <future>
 #include <functional>
@@ -32,10 +37,17 @@ std::mutex g_coutMutex; // TEMP!!!
 
 template<unsigned int N>
 struct JoinAndSetTupleValueRecursive;
+    
+template<unsigned int N>
+struct ArraySetValueRecursive;
 
 class TaskScheduler
 {
+#if (_MSC_VER >= 1600)
 	typedef Concurrency::concurrent_queue<std::shared_ptr<TaskBase>> ConcurrentQueueType;
+#else
+	typedef tbb::strict_ppl::concurrent_queue<std::shared_ptr<TaskBase>> ConcurrentQueueType;
+#endif
 	
 public:
 
@@ -116,28 +128,28 @@ public:
 		assert(TaskBase::getInstanceCount() == 0);
 	}
 
-	// ReturnType Func(void) w/o dependency
+	// ReturnType Func(...) w/o dependency
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f = Normal, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::string& name = "") const
 	{
-		return createTaskWithoutDependency(
+        return createTaskWithoutDependency(
 			f,
-			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-			std::is_void<FunctionTraits<Func>::ReturnType>(),
-			name);
+            name,
+            std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
+			std::is_void<typename FunctionTraits<Func>::ReturnType>());
 	}
-
-	// ReturnType Func(T) with dependencies
+    
+    // ReturnType Func(void) with dependencies
 	template<typename Func, typename T>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency = Normal, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name = "") const
 	{
-		return createTaskWithDependency(
-			f,
-			dependency,
-			std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-			std::is_void<FunctionTraits<Func>::ReturnType>(),
-			std::is_assignable<T, FunctionTraits<Func>::Arg<0>::Type>(),
-			name);
+        return createTaskWithDependency(
+            f,
+            dependency,
+            name,
+            std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
+            std::is_void<typename FunctionTraits<Func>::ReturnType>(),
+            std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
 	}
 
 	// join heterogeneous tasks
@@ -169,7 +181,7 @@ public:
 private:
 
 	template<typename Func, typename T, typename U>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, T argIsVoid, U fIsVoid, const std::string& name) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, const std::string& name, T argIsVoid, U fIsVoid) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
@@ -195,7 +207,7 @@ private:
 	}
 
 	template<typename Func, typename T, typename U, typename V, typename X>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, U argIsVoid, V fIsVoid, X argIsAssignable, const std::string& name) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name, U argIsVoid, V fIsVoid, X argIsAssignable) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
@@ -354,12 +366,14 @@ private:
 				break;
 			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 			case std::future_status::timeout:
+#if (_MSC_VER >= 1600)
 				if (arg._Is_ready()) // broken std::future_status::deferred temp workaround
 				{
 					trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
 					t->setStatus(TsDone);
 				}
 				else
+#endif
 				{
 					t->setStatus(TsScheduledPolling);
 					m_queue.push(t);
@@ -372,7 +386,7 @@ private:
 		}
 		else
 		{
-			throw std::future_error(std::future_errc::no_state, "broken dependency");
+			throw std::future_error(std::future_errc::no_state);
 		}
 	}
 
@@ -421,11 +435,13 @@ private:
 					continue;
 				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 				case std::future_status::timeout:
+#if (_MSC_VER >= 1600)
 					if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
 					{
 						ret.push_back(fut.get());
 						continue;
 					}
+#endif
 					status = TsScheduledPolling;
 					break;
 				default:
@@ -435,7 +451,7 @@ private:
 			}
 			else
 			{
-				throw std::future_error(std::future_errc::no_state, "broken dependency");
+				throw std::future_error(std::future_errc::no_state);
 			}
 
 			if (status != TsDone)
@@ -551,8 +567,10 @@ private:
 						return;
 					case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 					case std::future_status::timeout:
+#if (_MSC_VER >= 1600)
 						if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
 							return;
+#endif
 						break;
 					default:
 						assert(false);
@@ -590,7 +608,7 @@ private:
 	mutable std::condition_variable m_cv;
 	mutable ConcurrentQueueType m_queue;
 	mutable ConcurrentQueueType m_waitList;
-	mutable std::atomic_uint32_t m_taskConsumerCount;
+	mutable std::atomic<uint32_t> m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 	mutable std::atomic<bool> m_schedulerTaskEnabled;
 	mutable std::atomic<bool> m_flushWaitList;
@@ -603,18 +621,19 @@ private:
 template<unsigned int N>
 struct JoinAndSetTupleValueRecursive
 {
-public:
-
 	template <typename T, typename... Args, unsigned int I=0>
 	inline static TaskStatus invoke(T& ret, const Args&... fn)
 	{
-		return JoinAndSetValueRecursiveImpl<I>::invoke(ret, fn...);
+		return JoinAndSetValueRecursiveImpl<I, (I >= N)>::invoke(ret, fn...);
 	}
 
 private:
 
+	template<unsigned int I, bool Terminate>
+	struct JoinAndSetValueRecursiveImpl;
+
 	template<unsigned int I>
-	struct JoinAndSetValueRecursiveImpl
+	struct JoinAndSetValueRecursiveImpl<I, false>
 	{
 		template<typename U, typename V, typename... X>
 		static TaskStatus invoke(U& ret, const V& f0, const X&... fn)
@@ -628,14 +647,16 @@ private:
 				{
 				case std::future_status::ready:
 					std::get<I>(ret) = f0.get();
-					return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
+					return JoinAndSetValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
 				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
 				case std::future_status::timeout:
+#if (_MSC_VER >= 1600)
 					if (f0._Is_ready()) // broken std::future_status::deferred temp workaround
 					{
 						std::get<I>(ret) = f0.get();
-						return JoinAndSetValueRecursiveImpl<I+1>::invoke(ret, fn...);
+						return JoinAndSetValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
 					}
+#endif
 					return TsScheduledPolling;
 				default:
 					assert(false);
@@ -644,15 +665,15 @@ private:
 			}
 			else
 			{
-				throw std::future_error(std::future_errc::no_state, "broken dependency");
+				throw std::future_error(std::future_errc::no_state);
 			}
 
 			return TsInvalid;
 		}
 	};
 
-	template<>
-	struct JoinAndSetValueRecursiveImpl<N>
+	template<unsigned int I>
+	struct JoinAndSetValueRecursiveImpl<I, true>
 	{
 		template<typename U, typename... X>
 		inline static TaskStatus invoke(U&, const X&...)
@@ -665,29 +686,30 @@ private:
 template<unsigned int N>
 struct ArraySetValueRecursive
 {
-public:
-
 	template <typename T, typename... Args, unsigned int I=0>
 	inline static void invoke(T& ret, const Args&... fn)
 	{
-		ArraySetValueRecursiveImpl<I>::invoke(ret, fn...);
+		ArraySetValueRecursiveImpl<I, (I >= N)>::invoke(ret, fn...);
 	}
 
 private:
 
+	template<unsigned int I, bool Terminate>
+	struct ArraySetValueRecursiveImpl;
+
 	template<unsigned int I>
-	struct ArraySetValueRecursiveImpl
+	struct ArraySetValueRecursiveImpl<I, false>
 	{
 		template<typename U, typename V, typename... X>
 		inline static void invoke(U& ret, const V& f0, const X&... fn)
 		{
 			ret[I] = f0;
-			ArraySetValueRecursiveImpl<I+1>::invoke(ret, fn...);
+			ArraySetValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
 		}
 	};
 
-	template<>
-	struct ArraySetValueRecursiveImpl<N>
+	template<unsigned int I>
+	struct ArraySetValueRecursiveImpl<I, true>
 	{
 		template<typename U, typename... X>
 		inline static void invoke(U&, const X&...)

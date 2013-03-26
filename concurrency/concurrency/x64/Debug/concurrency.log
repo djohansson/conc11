@@ -1,0 +1,16 @@
+﻿Build started 2013-03-26 09:57:40.
+     1>Project "X:\Work\conc11\concurrency\concurrency\concurrency.vcxproj" on node 2 (Build target(s)).
+     1>CTP_Warning:
+         'Microsoft Visual C++ Compiler Nov 2012 CTP' is for testing purposes only.
+       ClCompile:
+         C:\Program Files (x86)\Microsoft Visual C++ Compiler Nov 2012 CTP\bin\x86_amd64\CL.exe /c /Zi /nologo /W4 /WX- /sdl /Od /D WIN32 /D _DEBUG /D _CONSOLE /D _UNICODE /D UNICODE /Gm /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Fo"x64\Debug\\" /Fd"x64\Debug\vc110.pdb" /Gd /TP /errorReport:prompt main.cpp
+         main.cpp
+       Link:
+         C:\Program Files (x86)\Microsoft Visual Studio 11.0\VC\bin\x86_amd64\link.exe /ERRORREPORT:PROMPT /OUT:"X:\Work\conc11\concurrency\x64\Debug\conc11.exe" /INCREMENTAL /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"X:\Work\conc11\concurrency\x64\Debug\conc11.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"X:\Work\conc11\concurrency\x64\Debug\conc11.lib" /MACHINE:X64 "/fe:C:\Program Files (x86)\Microsoft Visual C++ Compiler Nov 2012 CTP\\bin\x86_amd64\c1xx.dll"  x64\Debug\main.obj
+         x64\Debug\Task.obj
+         concurrency.vcxproj -> X:\Work\conc11\concurrency\x64\Debug\conc11.exe
+     1>Done Building Project "X:\Work\conc11\concurrency\concurrency\concurrency.vcxproj" (Build target(s)).
+
+Build succeeded.
+
+Time Elapsed 00:00:06.83

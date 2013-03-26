@@ -4,9 +4,9 @@
 #include <numeric>
 #include <string>
 
-int zeroFunc(void)
+unsigned int zeroFunc(void)
 {
-	return 0;
+	return 0U;
 }
 
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
@@ -62,12 +62,18 @@ int main(int argc, char* argv[])
 		cout << s << endl;
 	};
 
-	auto hello = scheduler.createTask([]
+	auto nothing = scheduler.createTask([]
+	{
+	}, "nothing");
+
+	auto zero = scheduler.createTask(&zeroFunc, nothing, "zero"); // global function ptr
+
+	auto hello = scheduler.createTask([] // const member function ptr (lambda)
 	{
 		return string("hello");
 	}, "hello");
 
-	auto world = scheduler.createTask([]()
+	auto world = scheduler.createTask([]() mutable // mutable member function ptr (lambda)
 	{
 		return string(" world!\n");
 	}, "world");
@@ -79,7 +85,7 @@ int main(int argc, char* argv[])
 
 	scheduler.run(helloWorld, TrmSyncJoin);
 	
-	vector<shared_ptr<Task<int>>> tasks;
+	vector<shared_ptr<Task<unsigned int>>> tasks;
 	for (unsigned int i = 0; i < 1000; i++)
 	{
 		tasks.push_back(scheduler.createTask([i]
@@ -93,39 +99,34 @@ int main(int argc, char* argv[])
 			unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
 			mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 			return i;
-		}, string("mandel") + to_string(i))->then([i](int val)
+		}, string("mandel") + to_string(i))->then([](unsigned int val)
 		{
 			unique_lock<mutex> lock(g_coutMutex);
-			cout << to_string(i) << ":[" << this_thread::get_id() << "] c" << endl;
+			cout << to_string(val) << ":[" << this_thread::get_id() << "] c" << endl;
 			return val;
 		}, string("mandel progress") + to_string(i)));
 	}
 
-	auto nothing = scheduler.createTask([]
-	{
-	}, "nothing");
-	auto zero = scheduler.createTask(&zeroFunc, nothing, "zero");
+	tasks.push_back(scheduler.createTask([](unsigned int v){ return ++v; }, zero));
+	tasks.push_back(scheduler.createTask([]{ return 10U; }, nothing));
+	tasks.push_back(scheduler.createTask([]{ return 100U; }));
 
-	tasks.push_back(scheduler.createTask([](int v){ return ++v; }, zero));
-	tasks.push_back(scheduler.createTask([]{ return 10; }, nothing));
-	tasks.push_back(scheduler.createTask([]{ return 100; }));
-
-	auto t0 = scheduler.join(tasks)->then([](vector<int> vals)
+	auto t0 = scheduler.join(tasks)->then([](vector<unsigned int> vals)
 	{
-		return accumulate(begin(vals), end(vals), 0);
+		return accumulate(begin(vals), end(vals), 0U);
 	}, "t0");
-	auto f = [](int v)
+	auto f = [](unsigned int v)
 	{
 		return v + 1000;
 	};
-	auto t1 = scheduler.createTask(f, t0, "f")->then([](int v)
+	auto t1 = scheduler.createTask(f, t0, "f")->then([](unsigned int v)
 	{
 		return v + 10000;
 	}, "t1");
 
 	scheduler.run(t1, TrmSyncJoin);
 
-	auto finalString = scheduler.join(t0, t1)->then([](tuple<int, int> t)
+	auto finalString = scheduler.join(t0, t1)->then([](tuple<unsigned int, unsigned int> t)
 	{
 		return to_string(get<0>(t)) + to_string(get<1>(t));
 	}, "finalString merge")->then(print, "finalString print");

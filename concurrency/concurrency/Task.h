@@ -2,6 +2,7 @@
 
 #include "FunctionTraits.h"
 #include "TaskEnabler.h"
+#include "TaskUtils.h"
 #include "Types.h"
 
 #include <atomic>
@@ -23,7 +24,7 @@ enum TaskStatus
 	TsInvalid
 };
 
-class TaskBase abstract
+class TaskBase /*abstract*/
 {
 public:
 
@@ -185,9 +186,9 @@ public:
 		auto tf = std::function<void()>([this, &tref, f]
 		{
 			trySetFuncResult(*tref.getPromise(), f, m_future,
-				std::is_void<FunctionTraits<Func>::Arg<0>::Type>(),
-				std::is_void<FunctionTraits<Func>::ReturnType>(),
-				std::is_assignable<ReturnType, FunctionTraits<Func>::Arg<0>::Type>());
+				std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
+				std::is_void<typename FunctionTraits<Func>::ReturnType>(),
+				std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
 
 			tref.setStatus(TsDone);
 		});
