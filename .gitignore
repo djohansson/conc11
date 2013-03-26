@@ -2,3 +2,21 @@
 concurrency/.DS_Store
 
 .DS_Store
+
+*.pdb
+
+*.exe
+
+*.ilk
+
+*.obj
+
+*.idb
+
+*.tlog
+
+*.log
+
+*.xcbkptlist
+
+*.lastbuildstate

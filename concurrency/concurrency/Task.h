@@ -10,6 +10,7 @@
 #include <functional>
 #include <future>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace conc11
@@ -183,12 +184,13 @@ public:
 		auto fut = p->get_future().share();
 		auto t = std::make_shared<Task<ThenReturnType>>(name);
 		Task<ThenReturnType>& tref = *t;
-		auto tf = std::function<void()>([this, &tref, f]
+        auto tf = std::function<void()>([this, &tref, f]
 		{
 			trySetFuncResult(*tref.getPromise(), f, m_future,
 				std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 				std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-				std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
+                std::is_convertible<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
+                //std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 
 			tref.setStatus(TsDone);
 		});

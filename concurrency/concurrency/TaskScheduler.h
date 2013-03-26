@@ -149,7 +149,8 @@ public:
             name,
             std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
             std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-            std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
+            std::is_convertible<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
+            //std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 	}
 
 	// join heterogeneous tasks

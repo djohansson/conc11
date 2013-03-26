@@ -27,17 +27,15 @@ void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigne
 			double c_re = MinRe + x*Re_factor;
 
 			double Z_re = c_re, Z_im = c_im;
-			bool isInside = true;
 			unsigned n = 0;
 			for(; n<MaxIterations; ++n)
 			{
 				double Z_re2 = Z_re*Z_re, Z_im2 = Z_im*Z_im;
-				if(Z_re2 + Z_im2 > 4)
-				{
-					isInside = false;
+				
+                if(Z_re2 + Z_im2 > 4)
 					break;
-				}
-				Z_im = 2*Z_re*Z_im + c_im;
+			
+                Z_im = 2*Z_re*Z_im + c_im;
 				Z_re = Z_re2 - Z_im2 + c_re;
 			}
 			
