@@ -29,7 +29,6 @@
 		38E57C7116FF985500AAAC0D /* FunctionTraits.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = FunctionTraits.h; path = concurrency/FunctionTraits.h; sourceTree = "<group>"; };
 		38E57C7216FF985500AAAC0D /* Task.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Task.cpp; path = concurrency/Task.cpp; sourceTree = "<group>"; };
 		38E57C7316FF985500AAAC0D /* Task.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Task.h; path = concurrency/Task.h; sourceTree = "<group>"; };
-		38E57C7416FF985500AAAC0D /* TaskEnabler.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = TaskEnabler.h; path = concurrency/TaskEnabler.h; sourceTree = "<group>"; };
 		38E57C7516FF985500AAAC0D /* TaskScheduler.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = TaskScheduler.h; path = concurrency/TaskScheduler.h; sourceTree = "<group>"; };
 		38E57C7616FF985500AAAC0D /* TaskUtils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = TaskUtils.h; path = concurrency/TaskUtils.h; sourceTree = "<group>"; };
 		38E57C7716FF985500AAAC0D /* Types.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Types.h; path = concurrency/Types.h; sourceTree = "<group>"; };
@@ -60,7 +59,6 @@
 				38E57C7116FF985500AAAC0D /* FunctionTraits.h */,
 				38E57C7216FF985500AAAC0D /* Task.cpp */,
 				38E57C7316FF985500AAAC0D /* Task.h */,
-				38E57C7416FF985500AAAC0D /* TaskEnabler.h */,
 				38E57C7516FF985500AAAC0D /* TaskScheduler.h */,
 				38E57C7616FF985500AAAC0D /* TaskUtils.h */,
 				38E57C7716FF985500AAAC0D /* Types.h */,

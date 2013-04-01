@@ -10,12 +10,12 @@ namespace conc11
 
 #if defined(_MSC_VER) // VC++ 2012 CTP does not like the variadic implementation of tuple, defaults to macro expansion
 
-template<unsigned int I, class... Args>
+template<unsigned int I, typename... Args>
 struct TupleElement : std::tuple_element<I, Args...> { };
 
 #else
 
-template<unsigned int I, class Tuple>
+template<unsigned int I, typename Tuple>
 struct TupleElement;
 
 template<>
@@ -24,39 +24,42 @@ struct TupleElement<0, std::tuple<>>
 	typedef void type;
 };
 
-template<class This, class... Tail>
+template<typename This, typename... Tail>
 struct TupleElement<0, std::tuple<This, Tail...>>
 {
 	typedef This type;
 };
 
-template<unsigned int I, class This, class... Tail>
-struct TupleElement<I, std::tuple<This, Tail...>> : TupleElement<I-1, std::tuple<Tail...>>
-{
-};
-
-template<unsigned int I, class... Tail>
-struct TupleElement<I, std::tuple<Nil, Tail...>> : TupleElement<0, std::tuple<Nil, Tail...>>
+template<unsigned int I, typename... Tail>
+struct TupleElement<I, std::tuple<Nil, Tail...>> : public TupleElement<0, std::tuple<Nil, Tail...>>
 {
 	typedef void type;
 };
 
-template<unsigned int I, class Tuple>
-struct TupleElement<I, const Tuple> : TupleElement<I, Tuple>
+template<unsigned int I, typename This, typename... Tail>
+struct TupleElement<I, std::tuple<This, Tail...>> : public TupleElement<I-1, std::tuple<Tail...>>
 {
-	typedef typename std::add_const<typename TupleElement<I, Tuple>::type>::type type;
 };
 
-template<unsigned int I, class Tuple>
-struct TupleElement<I, volatile Tuple> : TupleElement<I, Tuple>
+template<unsigned int I, typename Tuple>
+struct TupleElement<I, const Tuple> : public TupleElement<I, Tuple>
 {
-	typedef typename std::add_volatile<typename TupleElement<I, Tuple>::type>::type type;
+	typedef TupleElement<I, Tuple> basetype;
+	typedef typename std::add_const<typename basetype::type>::type type;
 };
 
-template<unsigned int I, class Tuple>
-struct TupleElement<I, const volatile Tuple> : TupleElement<I, Tuple>
+template<unsigned int I, typename Tuple>
+struct TupleElement<I, volatile Tuple> : public TupleElement<I, Tuple>
 {
-	typedef typename std::add_cv<typename TupleElement<I, Tuple>::type>::type type;
+	typedef TupleElement<I, Tuple> basetype;
+	typedef typename std::add_volatile<typename basetype::type>::type type;
+};
+
+template<unsigned int I, typename Tuple>
+struct TupleElement<I, const volatile Tuple> : public TupleElement<I, Tuple>
+{
+	typedef TupleElement<I, Tuple> basetype;
+	typedef typename std::add_cv<typename basetype::type>::type type;
 };
 
 #endif
@@ -78,7 +81,8 @@ struct FunctionTraits<R(C::*)(Args...)>
 	template<unsigned int N>
 	struct Arg
     {
-        typedef typename TupleElement<N, std::tuple<Args...>>::type Type;
+		typedef std::tuple<Args...> TupleType;
+        typedef typename TupleElement<N, TupleType>::type Type;
     };
 };
 
@@ -94,7 +98,8 @@ struct FunctionTraits<R(C::*)(Args...) const>
 	template<unsigned int N>
 	struct Arg
 	{
-		typedef typename TupleElement<N, std::tuple<Args...>>::type Type;
+		typedef std::tuple<Args...> TupleType;
+		typedef typename TupleElement<N, TupleType>::type Type;
 	};
 };
 
@@ -109,7 +114,8 @@ struct FunctionTraits<R(*)(Args...)>
 	template<unsigned int N>
 	struct Arg
 	{
-		typedef typename TupleElement<N, std::tuple<Args...>>::type Type;
+		typedef std::tuple<Args...> TupleType;
+		typedef typename TupleElement<N, TupleType>::type Type;
 	};
 };
 

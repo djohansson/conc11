@@ -18,3 +18,5 @@
 *.xcbkptlist
 
 *.lastbuildstate
+
+*.unsuccessfulbuild

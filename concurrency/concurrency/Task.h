@@ -1,7 +1,6 @@
 #pragma once
 
 #include "FunctionTraits.h"
-#include "TaskEnabler.h"
 #include "TaskUtils.h"
 #include "Types.h"
 
@@ -9,16 +8,18 @@
 #include <cassert>
 #include <functional>
 #include <future>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace conc11
 {
 
 enum TaskStatus
 {
-	TsUnscheduled,
+	TsPending,
 	TsScheduledOnce,
 	TsScheduledPolling,
 	TsDone,
@@ -30,10 +31,12 @@ class TaskBase /*abstract*/
 public:
 
 	virtual void operator()() = 0;
-	virtual operator bool() const = 0;
 	virtual TaskStatus getStatus() const = 0;
 	virtual void setStatus(TaskStatus status) = 0;
-
+	virtual bool isReentrant() const = 0;
+	virtual bool isContinuation() const = 0;
+	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const = 0;
+	
 	inline static unsigned int getInstanceCount() { return s_instanceCount; }
 
 protected:
@@ -42,30 +45,31 @@ protected:
 };
 
 template<typename T>
-class Task : public TaskBase
+class Task : public TaskBase, public std::enable_shared_from_this<Task<T>>
 {
 public:
 
 	typedef T ReturnType;
 
-	Task(const std::string& name = "", bool isReentrantAndRecallable = false)
+	Task(const std::string& name = "", bool isReentrant = false, bool isContinuation = false)
 		: m_name(name)
-		, m_status(TsUnscheduled)
-		, m_isReentrantAndRecallable(isReentrantAndRecallable)
-		, m_reentrancyFlag(isReentrantAndRecallable)
+		, m_status(TsInvalid)
+		, m_isReentrant(isReentrant)
+		, m_isContinuation(isContinuation)
+		, m_reentrancyFlag(isReentrant)
 	{
 		s_instanceCount++;
 	}
 
 	virtual ~Task()
 	{
-		assert(m_status != TsScheduledOnce || m_status != TsScheduledPolling);
+		assert(m_status != TsPending || m_status != TsScheduledOnce || m_status != TsScheduledPolling);
 		s_instanceCount--;
 	}
 
 	virtual void operator()() final
 	{
-		bool expected = m_isReentrantAndRecallable;
+		bool expected = m_isReentrant;
 		if (m_reentrancyFlag.compare_exchange_strong(expected, true))
 		{
 			assert(m_function);
@@ -74,30 +78,37 @@ public:
 
 			assert(m_status != TsInvalid);
 
-			if (m_status == TsDone && m_continuation && *m_continuation)
+			if (m_status == TsDone && m_continuation.get() != nullptr)
+			{
 				(*m_continuation)();
-		}
-		else if (!m_isReentrantAndRecallable)
-		{
-			assert(false);
+				m_continuation.reset();
+			}
 		}
 	}
 
-	virtual operator bool() const
-	{
-		assert(m_function && m_enabler);
-
-		return *m_enabler;
-	}
-
-	virtual TaskStatus getStatus() const
+	virtual TaskStatus getStatus() const final
 	{
 		return m_status;
 	}
 
-	virtual void setStatus(TaskStatus status)
+	virtual void setStatus(TaskStatus status) final
 	{
 		m_status = status;
+	}
+
+	virtual bool isReentrant() const final
+	{
+		return m_isReentrant;
+	}
+
+	virtual bool isContinuation() const final
+	{
+		return m_isContinuation;
+	}
+
+	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const final
+	{
+		return m_dependencies;
 	}
 
 	inline const std::function<void()>& getFunction() const
@@ -160,19 +171,21 @@ public:
 		m_future = std::forward<std::shared_future<ReturnType>>(fut);
 	}
 
-	inline const std::shared_ptr<TaskEnablerBase>& getEnabler() const
+	template<typename U>
+	inline void addDependencies(const std::vector<std::shared_ptr<U>>& deps)
 	{
-		return m_enabler;
+		m_dependencies.insert(m_dependencies.end(), deps.begin(), deps.end());
 	}
 
-	inline void setEnabler(const std::shared_ptr<TaskEnablerBase>& e)
+	template<typename U, typename... Args>
+	inline void addDependencies(const std::shared_ptr<Task<U>>& d0, const std::shared_ptr<Task<Args>>&... dn)
 	{
-		m_enabler = e;
+		m_dependencies.push_back(d0);
+		addDependencies(dn...);
 	}
 
-	inline void moveEnabler(std::shared_ptr<TaskEnablerBase>&& e)
+	inline void addDependencies()
 	{
-		m_enabler = std::forward<std::shared_ptr<TaskEnablerBase>>(e);
 	}
 
 	template<typename Func>
@@ -182,7 +195,7 @@ public:
 
 		auto p = std::make_shared<std::promise<ThenReturnType>>();
 		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ThenReturnType>>(name);
+		auto t = std::make_shared<Task<ThenReturnType>>(name, false, true);
 		Task<ThenReturnType>& tref = *t;
         auto tf = std::function<void()>([this, &tref, f]
 		{
@@ -198,8 +211,8 @@ public:
 		t->movePromise(std::move(p));
 		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
-		t->setEnabler(m_enabler);
-
+		t->addDependencies(this->shared_from_this());
+		
 		m_continuation = t;
 
 		return t;
@@ -214,11 +227,11 @@ private:
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
 	std::shared_ptr<TaskBase> m_continuation;
-	std::shared_ptr<TaskEnablerBase> m_enabler;
+	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
 	std::string m_name;
 	TaskStatus m_status;
-	bool m_isReentrantAndRecallable;
-	bool m_reentrancyAssertEnable;
+	bool m_isReentrant;
+	bool m_isContinuation;
 	std::atomic<bool> m_reentrancyFlag;
 };
 

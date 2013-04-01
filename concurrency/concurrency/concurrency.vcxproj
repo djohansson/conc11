@@ -170,7 +170,6 @@
   <ItemGroup>
     <ClInclude Include="FunctionTraits.h" />
     <ClInclude Include="Task.h" />
-    <ClInclude Include="TaskEnabler.h" />
     <ClInclude Include="TaskUtils.h" />
     <ClInclude Include="TaskScheduler.h" />
     <ClInclude Include="Types.h" />
