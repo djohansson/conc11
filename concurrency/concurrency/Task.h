@@ -78,10 +78,16 @@ public:
 
 			assert(m_status != TsInvalid);
 
-			if (m_status == TsDone && m_continuation.get() != nullptr)
+			if (m_status == TsDone && !m_continuation.expired())
 			{
-				(*m_continuation)();
-				m_continuation.reset();
+				if (std::shared_ptr<TaskBase> c = m_continuation.lock())
+				{
+					(*c)();
+				}
+				else
+				{
+					assert(false);
+				}
 			}
 		}
 	}
@@ -126,7 +132,7 @@ public:
 		m_function = std::forward<std::function<void()>>(f);
 	}
 
-	inline const std::shared_ptr<TaskBase>& getContinuation() const
+	inline const std::weak_ptr<TaskBase>& getContinuation() const
 	{
 		return m_continuation;
 	}
@@ -134,11 +140,6 @@ public:
 	inline void setContinuation(const std::shared_ptr<TaskBase>& c)
 	{
 		m_continuation = c;
-	}
-
-	inline void moveContinuation(std::shared_ptr<TaskBase>&& c)
-	{
-		m_continuation = std::forward<std::shared_ptr<TaskBase>>(c);
 	}
 
 	inline const std::shared_ptr<std::promise<ReturnType>>& getPromise() const
@@ -226,7 +227,7 @@ private:
 	std::function<void()> m_function;
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
-	std::shared_ptr<TaskBase> m_continuation;
+	std::weak_ptr<TaskBase> m_continuation;
 	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
 	std::string m_name;
 	TaskStatus m_status;

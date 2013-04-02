@@ -84,7 +84,7 @@ public:
 
 	~TaskScheduler()
 	{
-		sync();
+		waitJoin();
 
 		// signal threads to exit
 		{
@@ -500,7 +500,7 @@ private:
 
 		if (c > 0)
 		{
-			if (c >= m_threads.size())
+			if (c >= (m_threads.size() - m_taskConsumerCount))
 			{
 				wakeAll();
 			}
@@ -517,6 +517,9 @@ private:
 	template<typename T = void>
 	void waitJoin(const std::shared_ptr<Task<T>>& t = std::shared_ptr<Task<T>>()) const
 	{
+		// help out flushing the waitlist on this thread
+		while (!schedule(static_cast<unsigned int>(m_waitList.unsafe_size())));
+
 		// join in on tasks until queue is empty and no consumers are running
 		while (m_taskConsumerCount > 0)
 		{
@@ -553,15 +556,6 @@ private:
 				(*qt)();
 			}
 		}
-	}
-
-	void sync() 
-	{
-		// help out flushing on this thread
-		while (!schedule(static_cast<unsigned int>(m_waitList.unsafe_size())));
-
-		// and join in.
-		waitJoin();
 	}
 
 	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue, TaskStatus status = TsPending)

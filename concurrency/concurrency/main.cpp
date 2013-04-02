@@ -125,6 +125,7 @@ int main(int argc, char* argv[])
 
 		scheduler.run(t1, TrmSyncJoin);
 
+		// deliberately do not run this final task, just to test that there are no leaks
 		auto finalString = scheduler.join(t0, t1)->then([](tuple<unsigned int, unsigned int> t)
 		{
 			return to_string(get<0>(t)) + to_string(get<1>(t));
