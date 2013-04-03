@@ -4,10 +4,48 @@
 #include <numeric>
 #include <string>
 
-unsigned int zeroFunc(void)
-{
-	return 0U;
+#ifdef _MSC_VER
+#include <strsafe.h>
+#include <windows.h>
+void ErrorExit() 
+{ 
+	LPVOID lpMsgBuf;
+	LPVOID lpDisplayBuf;
+	DWORD dw = GetLastError();
+	LPTSTR lpszFunction = TEXT("GetProcessId");
+
+	FormatMessage(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+		FORMAT_MESSAGE_FROM_SYSTEM |
+		FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		dw,
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		(LPTSTR) &lpMsgBuf,
+		0, NULL );
+
+	lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT, (lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + 40) * sizeof(TCHAR)); 
+
+	StringCchPrintf((LPTSTR)lpDisplayBuf, 
+		LocalSize(lpDisplayBuf) / sizeof(TCHAR),
+		TEXT("%s failed with error %d: %s"), 
+		lpszFunction, dw, lpMsgBuf); 
+
+	MessageBox(NULL, (LPCTSTR)lpDisplayBuf, TEXT("Error"), MB_OK); 
+
+	LocalFree(lpMsgBuf);
+	LocalFree(lpDisplayBuf);
+
+	ExitProcess(dw); 
 }
+#else
+void ErrorExit() 
+{
+	exit(EXIT_FAILURE);
+}
+#endif
+
+#include <GL/glfw.h>
 
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
 {
@@ -31,14 +69,14 @@ void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigne
 			for(; n<MaxIterations; ++n)
 			{
 				double Z_re2 = Z_re*Z_re, Z_im2 = Z_im*Z_im;
-				
-                if(Z_re2 + Z_im2 > 4)
+
+				if(Z_re2 + Z_im2 > 4)
 					break;
-			
-                Z_im = 2*Z_re*Z_im + c_im;
+
+				Z_im = 2*Z_re*Z_im + c_im;
 				Z_re = Z_re2 - Z_im2 + c_re;
 			}
-			
+
 			image[(ymin + y)*xsize + xmin + x] = n;
 		}
 	}
@@ -52,40 +90,26 @@ int main(int argc, char* argv[])
 	using namespace std;
 	using namespace conc11;
 
+	if (!glfwInit() || !glfwOpenWindow(1280, 720, 8, 8, 8, 0, 24, 0, GLFW_WINDOW))   
+	{
+	//	glfwTerminate();
+		ErrorExit();
+	}
+
 	TaskScheduler scheduler;
 
+	glfwSetWindowTitle("conc11");
+
+	while (glfwGetWindowParam(GLFW_OPENED))
 	{
-		auto print = [](string s)
-		{
-			unique_lock<mutex> lock(g_coutMutex);
-			cout << s << endl;
-		};
-
-		auto nothing = scheduler.createTask([]
-		{
-		}, "nothing");
-
-		auto zero = scheduler.createTask(&zeroFunc, nothing, "zero"); // global function ptr
-
-		auto hello = scheduler.createTask([] // const member function ptr (lambda)
-		{
-			return string("hello");
-		}, "hello");
-
-		auto world = scheduler.createTask([]() mutable // mutable member function ptr (lambda)
-		{
-			return string(" world!\n");
-		}, "world");
-
-		auto helloWorld = scheduler.join(hello, world)->then([](tuple<string, string> t)
-		{
-			return get<0>(t) + get<1>(t);
-		}, "hello world merge")->then(print, "hello world print");
-
-		scheduler.run(helloWorld, TrmSyncJoin);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glClearDepth(0.0);
+		glClearStencil(0);
+		glClear(GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
 		vector<shared_ptr<Task<unsigned int>>> tasks;
-		for (unsigned int i = 0; i < 1000; i++)
+		for (unsigned int i = 0; i < 16; i++)
 		{
 			tasks.push_back(scheduler.createTask([i]
 			{
@@ -106,31 +130,26 @@ int main(int argc, char* argv[])
 			}, string("mandel progress") + to_string(i)));
 		}
 
-		tasks.push_back(scheduler.createTask([](unsigned int v){ return ++v; }, zero));
-		tasks.push_back(scheduler.createTask([]{ return 10U; }, nothing));
-		tasks.push_back(scheduler.createTask([]{ return 100U; }));
-
 		auto t0 = scheduler.join(tasks)->then([](vector<unsigned int> vals)
 		{
 			return accumulate(begin(vals), end(vals), 0U);
 		}, "t0");
-		auto f = [](unsigned int v)
-		{
-			return v + 1000;
-		};
-		auto t1 = scheduler.createTask(f, t0, "f")->then([](unsigned int v)
-		{
-			return v + 10000;
-		}, "t1");
 
-		scheduler.run(t1, TrmSyncJoin);
+		scheduler.run(t0, TrmSyncJoin);
 
-		// deliberately do not run this final task, just to test that there are no leaks
-		auto finalString = scheduler.join(t0, t1)->then([](tuple<unsigned int, unsigned int> t)
+		glColor3f(1.0f, 0.85f, 0.35f);
+		glBegin(GL_TRIANGLES);
 		{
-			return to_string(get<0>(t)) + to_string(get<1>(t));
-		}, "finalString merge")->then(print, "finalString print");
+			glVertex3f( 0.0f,  0.6f, 0.0f);
+			glVertex3f(-0.2f, -0.3f, 0.0f);
+			glVertex3f( 0.2f, -0.3f, 0.0f);
+		}
+		glEnd();
+
+		glfwSwapBuffers();
 	}
+
+	glfwTerminate();
 
 	return 0;
 }

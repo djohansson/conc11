@@ -110,6 +110,7 @@ public:
 		for (auto& t : m_threads)
 			t->join(); // will wake all threads due to std::notify_all_at_thread_exit
 
+        assert(m_waitList.empty());
 		assert(m_queue.empty());
 		assert(TaskBase::getInstanceCount() == 0);
 	}

@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		38B8F5C8170B1B3F00E7C793 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */; };
+		38B8F5CA170B1B6600E7C793 /* OpenGL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5C9170B1B6600E7C793 /* OpenGL.framework */; };
+		38B8F5CC170B1B7E00E7C793 /* libglfw.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5CB170B1B7E00E7C793 /* libglfw.a */; };
+		38B8F5CE170B1C2700E7C793 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5CD170B1C2700E7C793 /* IOKit.framework */; };
 		38E57C7916FF985500AAAC0D /* Task.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 38E57C7216FF985500AAAC0D /* Task.cpp */; };
 		38E57C7A16FF985500AAAC0D /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 38E57C7816FF985500AAAC0D /* main.cpp */; };
 		38E91B21170250F1007377A1 /* libtbb.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 38E91B1F170250F1007377A1 /* libtbb.dylib */; };
@@ -26,6 +30,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		38B8F5C9170B1B6600E7C793 /* OpenGL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenGL.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/OpenGL.framework; sourceTree = DEVELOPER_DIR; };
+		38B8F5CB170B1B7E00E7C793 /* libglfw.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libglfw.a; path = ../../../../../usr/local/lib/libglfw.a; sourceTree = "<group>"; };
+		38B8F5CD170B1C2700E7C793 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/IOKit.framework; sourceTree = DEVELOPER_DIR; };
+		38B8F5CF170B7C5200E7C793 /* Timing.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Timing.h; path = concurrency/Timing.h; sourceTree = "<group>"; };
 		38E57C7116FF985500AAAC0D /* FunctionTraits.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = FunctionTraits.h; path = concurrency/FunctionTraits.h; sourceTree = "<group>"; };
 		38E57C7216FF985500AAAC0D /* Task.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Task.cpp; path = concurrency/Task.cpp; sourceTree = "<group>"; };
 		38E57C7316FF985500AAAC0D /* Task.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Task.h; path = concurrency/Task.h; sourceTree = "<group>"; };
@@ -43,8 +52,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				38B8F5C8170B1B3F00E7C793 /* Cocoa.framework in Frameworks */,
+				38B8F5CA170B1B6600E7C793 /* OpenGL.framework in Frameworks */,
+				38B8F5CE170B1C2700E7C793 /* IOKit.framework in Frameworks */,
 				38E91B21170250F1007377A1 /* libtbb.dylib in Frameworks */,
 				38E91B22170250F1007377A1 /* libtbbmalloc.dylib in Frameworks */,
+				38B8F5CC170B1B7E00E7C793 /* libglfw.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -54,6 +67,10 @@
 		38E57C5B16FF95C000AAAC0D = {
 			isa = PBXGroup;
 			children = (
+				38B8F5CD170B1C2700E7C793 /* IOKit.framework */,
+				38B8F5CB170B1B7E00E7C793 /* libglfw.a */,
+				38B8F5C9170B1B6600E7C793 /* OpenGL.framework */,
+				38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */,
 				38E91B1F170250F1007377A1 /* libtbb.dylib */,
 				38E91B20170250F1007377A1 /* libtbbmalloc.dylib */,
 				38E57C7116FF985500AAAC0D /* FunctionTraits.h */,
@@ -61,6 +78,7 @@
 				38E57C7316FF985500AAAC0D /* Task.h */,
 				38E57C7516FF985500AAAC0D /* TaskScheduler.h */,
 				38E57C7616FF985500AAAC0D /* TaskUtils.h */,
+				38B8F5CF170B7C5200E7C793 /* Timing.h */,
 				38E57C7716FF985500AAAC0D /* Types.h */,
 				38E57C7816FF985500AAAC0D /* main.cpp */,
 				38EECAFA16FFA28C00D47F9D /* concurrency */,

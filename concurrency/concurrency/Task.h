@@ -2,6 +2,7 @@
 
 #include "FunctionTraits.h"
 #include "TaskUtils.h"
+#include "Timing.h"
 #include "Types.h"
 
 #include <atomic>
