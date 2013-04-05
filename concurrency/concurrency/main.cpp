@@ -1,5 +1,6 @@
 #include "TaskScheduler.h"
 
+#include <chrono>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -84,6 +85,13 @@ static const char* getGLVersion()
 	return "";
 }
 
+void lerp(const float a[3], const float b[3], float t, float out[3])
+{
+    out[0] = (1.0f - t) * a[0] + t * b[0];
+    out[1] = (1.0f - t) * a[1] + t * b[1];
+    out[2] = (1.0f - t) * a[2] + t * b[2];
+}
+
 int main(int argc, char* argv[])
 {
 	(void)argc;
@@ -103,20 +111,36 @@ int main(int argc, char* argv[])
 	str << "conc11 (OpenGL " << getGLVersion() << ")";
 
 	TaskScheduler scheduler;
+    
+    auto& threads = scheduler.getThreads();
+    vector<thread::id> threadIds;
+    threadIds.reserve(threads.size() + 1);
+    threadIds.push_back(this_thread::get_id());
+    for (auto t : threads)
+        threadIds.push_back(t->get_id());
 
 	glfwSetWindowTitle(str.str().c_str());
 
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth(0.0);
 	glClearStencil(0);
-
+    
+    float color0[3] = { 0.8f, 0.2f, 0.2f };
+    float color1[3] = { 0.2f, 0.8f, 0.2f };
+    float color2[3] = { 0.2f, 0.2f, 0.8f };
+    
 	while (glfwGetWindowParam(GLFW_OPENED))
 	{
+        auto frameStart = chrono::high_resolution_clock::now();
+        
 		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
 		vector<shared_ptr<Task<unsigned int>>> tasks;
-		for (unsigned int i = 0; i < 16; i++)
+		for (unsigned int i = 0, cnt = 64; i < cnt; i++)
 		{
+            float color[3];
+            lerp(color0, color1, float(i) / cnt, color);
+
 			tasks.push_back(scheduler.createTask([i]
 			{
 				static const unsigned int imageSize = 1024;
@@ -124,56 +148,57 @@ int main(int argc, char* argv[])
 				mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 				return i;
 			}, string("mandel") + to_string(i)));
+            tasks.back()->setDebugColor(color);
 		}
 
-		auto t0 = scheduler.join(tasks)->then([](vector<unsigned int> vals)
-		{
-			return accumulate(begin(vals), end(vals), 0U);
-		}, "t0");
+		auto t0 = scheduler.join(tasks);
+        t0->setDebugColor(color2);
+        auto t1 = t0->then([](vector<unsigned int> vals)
+        {
+            return accumulate(begin(vals), end(vals), 0U);
+        }, "t1");
 
 		shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
-		scheduler.dispatch(t0, collector);
+		scheduler.dispatch(t1, collector);
 		scheduler.waitJoin();
-
-		auto& threads = scheduler.getThreads();
-		vector<thread::id> threadIds;
-		threadIds.reserve(threads.size() + 1);
-		threadIds.push_back(this_thread::get_id());
-		for (auto t : threads)
-			threadIds.push_back(t->get_id());
 
 		float dy = 2.0f / threadIds.size();
 		float sy = 0.95f * dy;
 		const TimeIntervalCollector::ContainerType& intervals = collector->getIntervals();
-		unsigned int ti = 0;
-		for (auto& tid : threadIds)
+		unsigned int threadIndex = 0;
+		for (auto& threadId : threadIds)
 		{
-			float colorfactor = 1.0f / (0.25f * float(ti + 1));
-			glColor3f(0.0f, colorfactor * 0.35f, colorfactor * 0.85f);
-
-			auto range = intervals.equal_range(tid);
-			for (auto it = range.first; it != range.second; it++)
+			auto ip = intervals.equal_range(threadId);
+			for (auto it = ip.first; it != ip.second; it++)
 			{
-				float x = -1.0f;
-				float y = 1.0f - (ti * dy);
+                auto& ti = (*it).second;
+                
+                glColor3f(ti.debugColor[0], ti.debugColor[1], ti.debugColor[2]);
+                
+                auto start = chrono::duration_cast<chrono::nanoseconds>(ti.start - frameStart).count();
+                auto duration = chrono::duration_cast<chrono::nanoseconds>(ti.end - ti.start).count();
 
+                float x = -1.0f + 2.0f * static_cast<float>(start) / 1e9f;
+				float y = 1.0f - (threadIndex * dy);
+                float sx = 2.0f * static_cast<float>(duration) / 1e9f;
+				
 				glBegin(GL_TRIANGLES);
 				{
 					glVertex3f(x, y, 0.0f);
 					glVertex3f(x, y - sy, 0.0f);
-					glVertex3f(x + 2.0f, y, 0.0f);
+					glVertex3f(x + sx, y, 0.0f);
 				}
 				glEnd();
 				glBegin(GL_TRIANGLES);
 				{
 					glVertex3f(x, y - sy, 0.0f);
-					glVertex3f(x + 2.0f, y, 0.0f);
-					glVertex3f(x + 2.0f, y - sy, 0.0f);
+					glVertex3f(x + sx, y, 0.0f);
+					glVertex3f(x + sx, y - sy, 0.0f);
 				}
 				glEnd();
 			}
 
-			ti++;
+			threadIndex++;
 		}
 
 		glfwSwapBuffers();

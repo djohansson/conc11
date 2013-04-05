@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		383D92D6170F6A29003BC5AB /* libGLEW.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 383D92D5170F6A29003BC5AB /* libGLEW.a */; };
 		38B8F5C8170B1B3F00E7C793 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */; };
 		38B8F5CA170B1B6600E7C793 /* OpenGL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5C9170B1B6600E7C793 /* OpenGL.framework */; };
 		38B8F5CC170B1B7E00E7C793 /* libglfw.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 38B8F5CB170B1B7E00E7C793 /* libglfw.a */; };
@@ -30,11 +31,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		383D92D5170F6A29003BC5AB /* libGLEW.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libGLEW.a; path = ../../../../../usr/local/lib/libGLEW.a; sourceTree = "<group>"; };
+		388DA06E170F498100373B8B /* TimeIntervalCollector.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = TimeIntervalCollector.h; path = concurrency/TimeIntervalCollector.h; sourceTree = "<group>"; };
 		38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		38B8F5C9170B1B6600E7C793 /* OpenGL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenGL.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/OpenGL.framework; sourceTree = DEVELOPER_DIR; };
 		38B8F5CB170B1B7E00E7C793 /* libglfw.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libglfw.a; path = ../../../../../usr/local/lib/libglfw.a; sourceTree = "<group>"; };
 		38B8F5CD170B1C2700E7C793 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.8.sdk/System/Library/Frameworks/IOKit.framework; sourceTree = DEVELOPER_DIR; };
-		38B8F5CF170B7C5200E7C793 /* Timing.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = Timing.h; path = concurrency/Timing.h; sourceTree = "<group>"; };
 		38E57C7116FF985500AAAC0D /* FunctionTraits.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = FunctionTraits.h; path = concurrency/FunctionTraits.h; sourceTree = "<group>"; };
 		38E57C7216FF985500AAAC0D /* Task.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Task.cpp; path = concurrency/Task.cpp; sourceTree = "<group>"; };
 		38E57C7316FF985500AAAC0D /* Task.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Task.h; path = concurrency/Task.h; sourceTree = "<group>"; };
@@ -58,6 +60,7 @@
 				38E91B21170250F1007377A1 /* libtbb.dylib in Frameworks */,
 				38E91B22170250F1007377A1 /* libtbbmalloc.dylib in Frameworks */,
 				38B8F5CC170B1B7E00E7C793 /* libglfw.a in Frameworks */,
+				383D92D6170F6A29003BC5AB /* libGLEW.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -67,8 +70,9 @@
 		38E57C5B16FF95C000AAAC0D = {
 			isa = PBXGroup;
 			children = (
-				38B8F5CD170B1C2700E7C793 /* IOKit.framework */,
+				383D92D5170F6A29003BC5AB /* libGLEW.a */,
 				38B8F5CB170B1B7E00E7C793 /* libglfw.a */,
+				38B8F5CD170B1C2700E7C793 /* IOKit.framework */,
 				38B8F5C9170B1B6600E7C793 /* OpenGL.framework */,
 				38B8F5C7170B1B3F00E7C793 /* Cocoa.framework */,
 				38E91B1F170250F1007377A1 /* libtbb.dylib */,
@@ -78,7 +82,7 @@
 				38E57C7316FF985500AAAC0D /* Task.h */,
 				38E57C7516FF985500AAAC0D /* TaskScheduler.h */,
 				38E57C7616FF985500AAAC0D /* TaskUtils.h */,
-				38B8F5CF170B7C5200E7C793 /* Timing.h */,
+				388DA06E170F498100373B8B /* TimeIntervalCollector.h */,
 				38E57C7716FF985500AAAC0D /* Types.h */,
 				38E57C7816FF985500AAAC0D /* main.cpp */,
 				38EECAFA16FFA28C00D47F9D /* concurrency */,
@@ -147,8 +151,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GCC_VERSION = "";
-				HEADER_SEARCH_PATHS = /usr/local/include;
-				LIBRARY_SEARCH_PATHS = /usr/local/lib;
+				HEADER_SEARCH_PATHS = (
+					/usr/local/include,
+					/usr/local/Cellar/tbb/4.1u2/include,
+				);
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					/usr/local/Cellar/tbb/4.1u2/lib,
+				);
 			};
 			name = Debug;
 		};
@@ -156,15 +166,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GCC_VERSION = "";
-				HEADER_SEARCH_PATHS = /usr/local/include;
-				LIBRARY_SEARCH_PATHS = /usr/local/lib;
+				HEADER_SEARCH_PATHS = (
+					/usr/local/include,
+					/usr/local/Cellar/tbb/4.1u2/include,
+				);
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					/usr/local/Cellar/tbb/4.1u2/lib,
+				);
 			};
 			name = Release;
 		};
 		38E57C6E16FF973100AAAC0D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
+				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD_64_BIT)";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
@@ -188,10 +204,7 @@
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/usr/local/Cellar/tbb/4.1u2/lib,
-				);
+				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 10.8;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -202,7 +215,7 @@
 		38E57C6F16FF973100AAAC0D /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
+				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD_64_BIT)";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
@@ -220,10 +233,7 @@
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					/usr/local/Cellar/tbb/4.1u2/lib,
-				);
+				LIBRARY_SEARCH_PATHS = "$(inherited)";
 				MACOSX_DEPLOYMENT_TARGET = 10.8;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;

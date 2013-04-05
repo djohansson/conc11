@@ -65,6 +65,9 @@ public:
 		, m_reentrancyFlag(isReentrant)
 	{
 		s_instanceCount++;
+        m_debugColor[0] = 1.0f;
+        m_debugColor[1] = 1.0f;
+        m_debugColor[2] = 1.0f;
 	}
 
 	virtual ~Task()
@@ -81,7 +84,7 @@ public:
 			assert(m_function);
 
 			{
-				ScopedTimeInterval scope(m_collector);
+				ScopedTimeInterval scope(m_collector, m_name, m_debugColor);
 				m_function();
 			}
 
@@ -135,7 +138,18 @@ public:
 	{
 		m_collector = collector;
 	}
-
+    
+    inline const float* getDebugColor() const
+    {
+        return m_debugColor;
+    }
+    
+    inline void setDebugColor(float color[3])
+    {
+        m_debugColor[0] = color[0];
+        m_debugColor[1] = color[1];
+        m_debugColor[2] = color[2];
+    }
 
 	inline const std::function<void()>& getFunction() const
 	{
@@ -251,6 +265,7 @@ private:
 	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
 	std::shared_ptr<TimeIntervalCollector> m_collector;
 	std::string m_name;
+    float m_debugColor[3];
 	TaskStatus m_status;
 	bool m_isReentrant;
 	bool m_isContinuation;

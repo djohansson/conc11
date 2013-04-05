@@ -145,11 +145,15 @@ public:
 		schedule(queue);
 	}
 
-	// join in on task queue
-	void waitJoin()
-	{
-		// join in on tasks until queue is empty and no consumers are running
-		while (m_taskConsumerCount > 0)
+	// join in on task queue, flushing the entire queue or returning once task t has finished
+	template<typename T = void>
+    void waitJoin(const std::shared_ptr<Task<T>>& t = std::shared_ptr<Task<T>>()) const
+    {
+        // todo: implement proper support for joining in on specific task
+		(void)t;
+        assert(!t);
+        
+		do
 		{
 			std::shared_ptr<TaskBase> qt;
 			while (m_queue.try_pop(qt))
@@ -157,7 +161,8 @@ public:
 				assert(qt.get() != nullptr);
 				(*qt)();
 			}
-		}
+            
+		} while (m_taskConsumerCount > 0);
 	}
 
 private:
