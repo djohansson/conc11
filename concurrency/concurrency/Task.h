@@ -2,7 +2,7 @@
 
 #include "FunctionTraits.h"
 #include "TaskUtils.h"
-#include "Timing.h"
+#include "TimeIntervalCollector.h"
 #include "Types.h"
 
 #include <atomic>
@@ -37,8 +37,13 @@ public:
 	virtual bool isReentrant() const = 0;
 	virtual bool isContinuation() const = 0;
 	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const = 0;
+	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
+	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
 	
-	inline static unsigned int getInstanceCount() { return s_instanceCount; }
+	inline static unsigned int getInstanceCount()
+	{
+		return s_instanceCount;
+	}
 
 protected:
 
@@ -75,7 +80,10 @@ public:
 		{
 			assert(m_function);
 
-			m_function();
+			{
+				ScopedTimeInterval scope(m_collector);
+				m_function();
+			}
 
 			assert(m_status != TsInvalid);
 
@@ -117,6 +125,17 @@ public:
 	{
 		return m_dependencies;
 	}
+
+	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) final
+	{
+		return m_collector;
+	}
+
+	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) final
+	{
+		m_collector = collector;
+	}
+
 
 	inline const std::function<void()>& getFunction() const
 	{
@@ -230,6 +249,7 @@ private:
 	std::shared_future<ReturnType> m_future;
 	std::weak_ptr<TaskBase> m_continuation;
 	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
+	std::shared_ptr<TimeIntervalCollector> m_collector;
 	std::string m_name;
 	TaskStatus m_status;
 	bool m_isReentrant;

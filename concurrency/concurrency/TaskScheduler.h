@@ -3,10 +3,12 @@
 #include "FunctionTraits.h"
 #include "Task.h"
 #include "TaskUtils.h"
+#include "TimeIntervalCollector.h"
 #include "Types.h"
 
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <condition_variable>
 #include <exception>
 #include <future>
@@ -21,18 +23,9 @@
 namespace conc11
 {
 
-enum TaskRunMode
-{
-	TrmAsync,
-	TrmSyncJoin,
-	TrmSyncWait,
-};
-
-std::mutex g_coutMutex; // TEMP!!!
-
 template<unsigned int N>
 struct JoinAndSetTupleValueRecursive;
-    
+
 template<unsigned int N>
 struct ArraySetValueRecursive;
 
@@ -41,8 +34,8 @@ class TaskScheduler
 public:
 
 	TaskScheduler(unsigned int threadCount = std::max(2U, std::thread::hardware_concurrency()) - 1)
-		: m_running(true)
-		, m_taskConsumerCount(threadCount)
+		: m_taskConsumerCount(threadCount)
+		, m_running(true)
 		, m_schedulerTaskEnabled(false)
 	{
 		for (unsigned int i = 0; i < threadCount; i++)
@@ -53,26 +46,11 @@ public:
 				{
 					threadMain();
 				}
-				catch (const std::future_error& e)
+				catch (const std::future_error& /*e*/)
 				{
-					std::unique_lock<std::mutex> lock(g_coutMutex);
-
-					std::cout << std::endl << "Exception caught in TaskScheduler thread " << std::this_thread::get_id() << ": ";
-
-					if (e.code() == std::make_error_code(std::future_errc::broken_promise))
-						std::cout << e.what() << std::endl;
-					else if (e.code() == std::make_error_code(std::future_errc::future_already_retrieved))
-						std::cout << e.what() << std::endl;
-					else if (e.code() == std::make_error_code(std::future_errc::promise_already_satisfied))
-						std::cout << e.what() << std::endl;
-					else if (e.code() == std::make_error_code(std::future_errc::no_state))
-						std::cout << e.what() << std::endl;
-					else
-						std::cout << e.what() << std::endl;
 				}
 				catch (...)
 				{
-					std::cout << "unhandled exception" << std::endl;
 				}
 
 				m_taskConsumerCount--;
@@ -110,34 +88,38 @@ public:
 		for (auto& t : m_threads)
 			t->join(); // will wake all threads due to std::notify_all_at_thread_exit
 
-        assert(m_waitList.empty());
 		assert(m_queue.empty());
 		assert(TaskBase::getInstanceCount() == 0);
+	}
+
+	inline const std::vector<std::shared_ptr<std::thread>>& getThreads() const
+	{
+		return m_threads;
 	}
 
 	// ReturnType Func(...) w/o dependency
 	template<typename Func>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::string& name = "") const
 	{
-        return createTaskWithoutDependency(
+		return createTaskWithoutDependency(
 			f,
-            name,
-            std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
+			name,
+			std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 			std::is_void<typename FunctionTraits<Func>::ReturnType>());
 	}
-    
-    // ReturnType Func(void) with dependencies
+
+	// ReturnType Func(void) with dependencies
 	template<typename Func, typename T>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name = "") const
 	{
-        return createTaskWithDependency(
-            f,
-            dependency,
-            name,
-            std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
-            std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-            std::is_convertible<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
-            //std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+		return createTaskWithDependency(
+			f,
+			dependency,
+			name,
+			std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
+			std::is_void<typename FunctionTraits<Func>::ReturnType>(),
+			std::is_convertible<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
+		//std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 	}
 
 	// join heterogeneous tasks
@@ -154,16 +136,28 @@ public:
 		return joinTasks(c);
 	}
 
-	// execute task chain
+	// dispatch task chain
 	template<typename T>
-	void run(std::shared_ptr<Task<T>>& t, TaskRunMode mode = TrmAsync) const
+	void dispatch(std::shared_ptr<Task<T>>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
 	{
-		createSchedulerUpdateTask(enqueue(t, m_waitList));
+		ConcurrentQueueType<std::shared_ptr<TaskBase>> queue;
+		enqueue(t, queue, collector);
+		schedule(queue);
+	}
 
-		if (mode == TrmSyncJoin)
-			waitJoin(t);
-		else if (mode == TrmSyncWait)
-			t->getFuture().wait();
+	// join in on task queue
+	void waitJoin()
+	{
+		// join in on tasks until queue is empty and no consumers are running
+		while (m_taskConsumerCount > 0)
+		{
+			std::shared_ptr<TaskBase> qt;
+			while (m_queue.try_pop(qt))
+			{
+				assert(qt.get() != nullptr);
+				(*qt)();
+			}
+		}
 	}
 
 private:
@@ -185,7 +179,7 @@ private:
 		t->movePromise(std::move(p));
 		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
-		
+
 		return t;
 	}
 
@@ -437,66 +431,15 @@ private:
 		}
 	}
 
-	void schedulerUpdateTask(std::shared_ptr<Task<void>>& t, unsigned int count) const
+	void schedule(ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue) const
 	{
-		bool waitListIsEmpty = schedule(count);
-		if (m_schedulerTaskEnabled.compare_exchange_strong(waitListIsEmpty, false))
-		{
-			trySetResult(*(t->getPromise()));
-			t->setStatus(TsDone);
-			return;
-		}
-		
-		m_queue.push(t);
-	}
-
-	void createSchedulerUpdateTask(unsigned int count) const
-	{
-		bool expected = false;
-		if (m_schedulerTaskEnabled.compare_exchange_strong(expected, true))
-		{
-			auto p = std::make_shared<std::promise<void>>();
-			auto fut = p->get_future().share();
-			auto t = std::make_shared<Task<void>>("schedulerUpdate", true);
-			std::weak_ptr<Task<void>> tw = t;
-			auto tf = std::function<void()>([this, tw, count]
-			{
-				if (auto t = tw.lock())
-				{
-					schedulerUpdateTask(t, count);
-				}
-				else
-				{
-					assert(false);
-				}
-			});
-			t->movePromise(std::move(p));
-			t->moveFuture(std::move(fut));
-			t->moveFunction(std::move(tf));
-			
-			t->setStatus(TsScheduledPolling);
-			m_queue.push(t);
-			wakeOne();
-		}
-	}
-
-	bool schedule(unsigned int n) const
-	{
-		// process n elements in wait list
 		unsigned int c = 0;
-		for (unsigned int i = 0; i < n; i++)
+		std::shared_ptr<TaskBase> t;
+		while (queue.try_pop(t))
 		{
-			std::shared_ptr<TaskBase> t;
-			if (m_waitList.try_pop(t))
-			{
-				assert(t.get() != nullptr);
-				m_queue.push(t);
-				c++; // is awesome
-			}
-			else
-			{
-				break;
-			}
+			assert(t.get() != nullptr);
+			m_queue.push(t);
+			c++; // is awesome
 		}
 
 		if (c > 0)
@@ -511,65 +454,21 @@ private:
 					wakeOne();
 			}
 		}
-
-		return m_waitList.empty();
 	}
 
-	template<typename T = void>
-	void waitJoin(const std::shared_ptr<Task<T>>& t = std::shared_ptr<Task<T>>()) const
-	{
-		// help out flushing the waitlist on this thread
-		while (!schedule(static_cast<unsigned int>(m_waitList.unsafe_size())));
-
-		// join in on tasks until queue is empty and no consumers are running
-		while (m_taskConsumerCount > 0)
-		{
-			if (t.get() != nullptr)
-			{
-				auto fut = t->getFuture();
-				// The implementations are encouraged to detect the case when valid == false before the call
-				// and throw a future_error with an error condition of future_errc::no_state. 
-				// http://en.cppreference.com/w/cpp/thread/future/wait_for
-				if (fut.valid())
-				{
-					switch (fut.wait_for(std::chrono::seconds(0)))
-					{
-					case std::future_status::ready:
-						return;
-					case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
-					case std::future_status::timeout:
-#if (_MSC_VER >= 1600)
-						if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
-							return;
-#endif
-						break;
-					default:
-						assert(false);
-						break;
-					}
-				}
-			}
-
-			std::shared_ptr<TaskBase> qt;
-			while (m_queue.try_pop(qt))
-			{
-				assert(qt.get() != nullptr);
-				(*qt)();
-			}
-		}
-	}
-
-	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue, TaskStatus status = TsPending)
+	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
 	{
 		unsigned int count = 0;
 
 		for (auto& d : t->getDependencies())
-			count += enqueue(d, queue, status);
+			count += enqueue(d, queue, collector);
+
+		t->setTimeIntervalCollector(collector);
 
 		if (!t->isContinuation())
 		{
 			count++;
-			t->setStatus(status);
+			t->setStatus(TsPending);
 			queue.push(t);
 		}
 
@@ -583,11 +482,10 @@ private:
 	mutable std::mutex m_mutex;
 	mutable std::condition_variable m_cv;
 	mutable ConcurrentQueueType<std::shared_ptr<TaskBase>> m_queue;
-	mutable ConcurrentQueueType<std::shared_ptr<TaskBase>> m_waitList;
 	mutable std::atomic<uint32_t> m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 	mutable std::atomic<bool> m_schedulerTaskEnabled;
-	
+
 	// main thread only state
 	std::vector<std::shared_ptr<std::thread>> m_threads;
 };

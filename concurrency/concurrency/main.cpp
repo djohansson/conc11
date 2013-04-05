@@ -1,50 +1,13 @@
 #include "TaskScheduler.h"
 
-#include <iostream>
+#include <memory>
 #include <numeric>
-#include <string>
+#include <sstream>
+#include <thread>
+#include <utility>
+#include <vector>
 
-#ifdef _MSC_VER
-#include <strsafe.h>
-#include <windows.h>
-void ErrorExit() 
-{ 
-	LPVOID lpMsgBuf;
-	LPVOID lpDisplayBuf;
-	DWORD dw = GetLastError();
-	LPTSTR lpszFunction = TEXT("GetProcessId");
-
-	FormatMessage(
-		FORMAT_MESSAGE_ALLOCATE_BUFFER | 
-		FORMAT_MESSAGE_FROM_SYSTEM |
-		FORMAT_MESSAGE_IGNORE_INSERTS,
-		NULL,
-		dw,
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-		(LPTSTR) &lpMsgBuf,
-		0, NULL );
-
-	lpDisplayBuf = (LPVOID)LocalAlloc(LMEM_ZEROINIT, (lstrlen((LPCTSTR)lpMsgBuf) + lstrlen((LPCTSTR)lpszFunction) + 40) * sizeof(TCHAR)); 
-
-	StringCchPrintf((LPTSTR)lpDisplayBuf, 
-		LocalSize(lpDisplayBuf) / sizeof(TCHAR),
-		TEXT("%s failed with error %d: %s"), 
-		lpszFunction, dw, lpMsgBuf); 
-
-	MessageBox(NULL, (LPCTSTR)lpDisplayBuf, TEXT("Error"), MB_OK); 
-
-	LocalFree(lpMsgBuf);
-	LocalFree(lpDisplayBuf);
-
-	ExitProcess(dw); 
-}
-#else
-void ErrorExit() 
-{
-	exit(EXIT_FAILURE);
-}
-#endif
-
+#include <GL/glew.h>
 #include <GL/glfw.h>
 
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
@@ -82,6 +45,45 @@ void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigne
 	}
 }
 
+static const char* getGLVersion()
+{
+	if (GLEW_VERSION_4_3)
+		return "4.3";
+	else if (GLEW_VERSION_4_2)
+		return "4.2";
+	else if (GLEW_VERSION_4_1)
+		return "4.1";
+	else if (GLEW_VERSION_4_0)
+		return "4.0";
+	else if (GLEW_VERSION_3_3)
+		return "3.3";
+	else if (GLEW_VERSION_3_2)
+		return "3.2";
+	else if (GLEW_VERSION_3_1)
+		return "3.1";
+	else if (GLEW_VERSION_3_0)
+		return "3.0";
+	else if (GLEW_VERSION_2_1)
+		return "2.1";
+	else if (GLEW_VERSION_2_0)
+		return "2.0";
+	else if (GLEW_VERSION_1_5)
+		return "1.5";
+	else if (GLEW_VERSION_1_4)
+		return "1.4";
+	else if (GLEW_VERSION_1_3)
+		return "1.3";
+	else if (GLEW_VERSION_1_2_1)
+		return "1.2.1";
+	else if (GLEW_VERSION_1_2)
+		return "1.2";
+	else if (GLEW_VERSION_1_1)
+		return "1.1";
+	
+	assert(false);
+	return "";
+}
+
 int main(int argc, char* argv[])
 {
 	(void)argc;
@@ -90,44 +92,38 @@ int main(int argc, char* argv[])
 	using namespace std;
 	using namespace conc11;
 
-	if (!glfwInit() || !glfwOpenWindow(1280, 720, 8, 8, 8, 0, 24, 0, GLFW_WINDOW))   
+	if (!glfwInit() || !glfwOpenWindow(1280, 720, 8, 8, 8, 8, 24, 8, GLFW_WINDOW) || glewInit() != GLEW_OK)   
 	{
-	//	glfwTerminate();
-		ErrorExit();
+		glfwTerminate();
+
+		return -1;
 	}
+
+	stringstream str;
+	str << "conc11 (OpenGL " << getGLVersion() << ")";
 
 	TaskScheduler scheduler;
 
-	glfwSetWindowTitle("conc11");
+	glfwSetWindowTitle(str.str().c_str());
+
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClearDepth(0.0);
+	glClearStencil(0);
 
 	while (glfwGetWindowParam(GLFW_OPENED))
 	{
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
-		glClearDepth(0.0);
-		glClearStencil(0);
-		glClear(GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
 		vector<shared_ptr<Task<unsigned int>>> tasks;
 		for (unsigned int i = 0; i < 16; i++)
 		{
 			tasks.push_back(scheduler.createTask([i]
 			{
-				{
-					unique_lock<mutex> lock(g_coutMutex);
-					cout << to_string(i) << ":[" << this_thread::get_id() << "]" << endl;
-				}
-
 				static const unsigned int imageSize = 1024;
 				unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
 				mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
 				return i;
-			}, string("mandel") + to_string(i))->then([](unsigned int val)
-			{
-				unique_lock<mutex> lock(g_coutMutex);
-				cout << to_string(val) << ":[" << this_thread::get_id() << "] c" << endl;
-				return val;
-			}, string("mandel progress") + to_string(i)));
+			}, string("mandel") + to_string(i)));
 		}
 
 		auto t0 = scheduler.join(tasks)->then([](vector<unsigned int> vals)
@@ -135,16 +131,50 @@ int main(int argc, char* argv[])
 			return accumulate(begin(vals), end(vals), 0U);
 		}, "t0");
 
-		scheduler.run(t0, TrmSyncJoin);
+		shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
+		scheduler.dispatch(t0, collector);
+		scheduler.waitJoin();
 
-		glColor3f(1.0f, 0.85f, 0.35f);
-		glBegin(GL_TRIANGLES);
+		auto& threads = scheduler.getThreads();
+		vector<thread::id> threadIds;
+		threadIds.reserve(threads.size() + 1);
+		threadIds.push_back(this_thread::get_id());
+		for (auto t : threads)
+			threadIds.push_back(t->get_id());
+
+		float dy = 2.0f / threadIds.size();
+		float sy = 0.95f * dy;
+		const TimeIntervalCollector::ContainerType& intervals = collector->getIntervals();
+		unsigned int ti = 0;
+		for (auto& tid : threadIds)
 		{
-			glVertex3f( 0.0f,  0.6f, 0.0f);
-			glVertex3f(-0.2f, -0.3f, 0.0f);
-			glVertex3f( 0.2f, -0.3f, 0.0f);
+			float colorfactor = 1.0f / (0.25f * float(ti + 1));
+			glColor3f(0.0f, colorfactor * 0.35f, colorfactor * 0.85f);
+
+			auto range = intervals.equal_range(tid);
+			for (auto it = range.first; it != range.second; it++)
+			{
+				float x = -1.0f;
+				float y = 1.0f - (ti * dy);
+
+				glBegin(GL_TRIANGLES);
+				{
+					glVertex3f(x, y, 0.0f);
+					glVertex3f(x, y - sy, 0.0f);
+					glVertex3f(x + 2.0f, y, 0.0f);
+				}
+				glEnd();
+				glBegin(GL_TRIANGLES);
+				{
+					glVertex3f(x, y - sy, 0.0f);
+					glVertex3f(x + 2.0f, y, 0.0f);
+					glVertex3f(x + 2.0f, y - sy, 0.0f);
+				}
+				glEnd();
+			}
+
+			ti++;
 		}
-		glEnd();
 
 		glfwSwapBuffers();
 	}
