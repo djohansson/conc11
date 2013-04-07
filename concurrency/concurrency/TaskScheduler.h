@@ -26,9 +26,6 @@ namespace conc11
 template<unsigned int N>
 struct JoinAndSetTupleValueRecursive;
 
-template<unsigned int N>
-struct ArraySetValueRecursive;
-
 class TaskScheduler
 {	
 public:

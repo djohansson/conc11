@@ -62,6 +62,11 @@ public:
 		(*handle).second.end = m_clock.now();
 	}
 
+	inline void clear()
+	{
+		m_intervals.clear();
+	}
+
 	inline const ContainerType& getIntervals() const
 	{
 		return m_intervals;

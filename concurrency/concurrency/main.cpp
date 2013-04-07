@@ -99,18 +99,22 @@ int main(int argc, char* argv[])
 
 	using namespace std;
 	using namespace conc11;
+    
+    glewExperimental = true;
 
-	if (!glfwInit() || !glfwOpenWindow(1280, 720, 8, 8, 8, 8, 24, 8, GLFW_WINDOW) || glewInit() != GLEW_OK)   
+    auto glfwInitResult = glfwInit();
+    auto glfwOpenWindowResult = glfwOpenWindow(1280, 720, 8, 8, 8, 0, 0, 0, GLFW_WINDOW);
+    auto glewInitResult = glewInit();
+    
+	if (!glfwInitResult || !glfwOpenWindowResult || glewInitResult != GLEW_OK)
 	{
 		glfwTerminate();
 
 		return -1;
 	}
 
-	stringstream str;
-	str << "conc11 (OpenGL " << getGLVersion() << ")";
-
 	TaskScheduler scheduler;
+	shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
     
     auto& threads = scheduler.getThreads();
     vector<thread::id> threadIds;
@@ -118,8 +122,6 @@ int main(int argc, char* argv[])
     threadIds.push_back(this_thread::get_id());
     for (auto t : threads)
         threadIds.push_back(t->get_id());
-
-	glfwSetWindowTitle(str.str().c_str());
 
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth(0.0);
@@ -129,37 +131,26 @@ int main(int argc, char* argv[])
     float color1[3] = { 0.2f, 0.8f, 0.2f };
     float color2[3] = { 0.2f, 0.2f, 0.8f };
     
+    vector<unique_ptr<unsigned>> images;
+    const unsigned int imageSize = 1024;
+    const unsigned int imageCnt = 64;
+    for (unsigned int i = 0; i < imageCnt; i++)
+        images.push_back(unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
+        
+    auto lastFrameStart = chrono::high_resolution_clock::now();
 	while (glfwGetWindowParam(GLFW_OPENED))
 	{
         auto frameStart = chrono::high_resolution_clock::now();
-        
-		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+        auto dt = chrono::duration_cast<chrono::nanoseconds>(frameStart - lastFrameStart).count();
+        lastFrameStart = frameStart;
+        auto fps = 1e9 / double(dt);
 
-		vector<shared_ptr<Task<unsigned int>>> tasks;
-		for (unsigned int i = 0, cnt = 64; i < cnt; i++)
-		{
-            float color[3];
-            lerp(color0, color1, float(i) / cnt, color);
+        stringstream str;
+        str << "conc11 (OpenGL " << getGLVersion() << ")" << " " << to_string(fps) << " fps";
+        glfwSetWindowTitle(str.str().c_str());
 
-			tasks.push_back(scheduler.createTask([i]
-			{
-				static const unsigned int imageSize = 1024;
-				unique_ptr<unsigned> image(new unsigned[imageSize*imageSize]);
-				mandel(0, imageSize, imageSize, 0, imageSize, imageSize, image.get());
-				return i;
-			}, string("mandel") + to_string(i)));
-            tasks.back()->setDebugColor(color);
-		}
+		glClear(GL_COLOR_BUFFER_BIT);
 
-		auto t0 = scheduler.join(tasks);
-        t0->setDebugColor(color2);
-        auto t1 = t0->then([](vector<unsigned int> vals)
-        {
-            return accumulate(begin(vals), end(vals), 0U);
-        }, "t1");
-
-		shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
-		scheduler.dispatch(t1, collector);
 		scheduler.waitJoin();
 
 		float dy = 2.0f / threadIds.size();
@@ -171,17 +162,17 @@ int main(int argc, char* argv[])
 			auto ip = intervals.equal_range(threadId);
 			for (auto it = ip.first; it != ip.second; it++)
 			{
-                auto& ti = (*it).second;
-                
-                glColor3f(ti.debugColor[0], ti.debugColor[1], ti.debugColor[2]);
-                
-                auto start = chrono::duration_cast<chrono::nanoseconds>(ti.start - frameStart).count();
-                auto duration = chrono::duration_cast<chrono::nanoseconds>(ti.end - ti.start).count();
+				auto& ti = (*it).second;
 
-                float x = -1.0f + 2.0f * static_cast<float>(start) / 1e9f;
+				glColor3f(ti.debugColor[0], ti.debugColor[1], ti.debugColor[2]);
+
+				auto start = chrono::duration_cast<chrono::nanoseconds>(ti.start - frameStart).count();
+				auto duration = chrono::duration_cast<chrono::nanoseconds>(ti.end - ti.start).count();
+
+				float x = -1.0f + 2.0f * static_cast<float>(start) / 1e9f;
 				float y = 1.0f - (threadIndex * dy);
-                float sx = 2.0f * static_cast<float>(duration) / 1e9f;
-				
+				float sx = 2.0f * static_cast<float>(duration) / 1e9f;
+
 				glBegin(GL_TRIANGLES);
 				{
 					glVertex3f(x, y, 0.0f);
@@ -196,13 +187,42 @@ int main(int argc, char* argv[])
 					glVertex3f(x + sx, y - sy, 0.0f);
 				}
 				glEnd();
+                
+                glFlush();
 			}
 
 			threadIndex++;
 		}
 
+		collector->clear();
+        
+		vector<shared_ptr<Task<unsigned int>>> tasks;
+		for (unsigned int i = 0; i < imageCnt; i++)
+		{
+            float color[3];
+            lerp(color0, color1, float(i) / imageCnt, color);
+
+			tasks.push_back(scheduler.createTask([i, imageSize, &images]
+			{
+				mandel(0, imageSize, imageSize, 0, imageSize, imageSize, images[i].get());
+				return i;
+			}, string("mandel") + to_string(i)));
+            tasks.back()->setDebugColor(color);
+		}
+
+		auto t0 = scheduler.join(tasks);
+        t0->setDebugColor(color2);
+        auto t1 = t0->then([](vector<unsigned int> vals)
+        {
+            return accumulate(begin(vals), end(vals), 0U);
+        }, "t1");
+
+		scheduler.dispatch(t1, collector);
+
 		glfwSwapBuffers();
 	}
+
+	scheduler.waitJoin();
 
 	glfwTerminate();
 
