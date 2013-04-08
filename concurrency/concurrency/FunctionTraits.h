@@ -77,13 +77,13 @@ struct FunctionTraits<R(C::*)(Args...)>
 	typedef R ReturnType;
 	typedef C ClassType;
 	static const unsigned int ArgCount = sizeof...(Args);
- 	
+
 	template<unsigned int N>
 	struct Arg
-    {
+	{
 		typedef std::tuple<Args...> TupleType;
-        typedef typename TupleElement<N, TupleType>::type Type;
-    };
+		typedef typename TupleElement<N, TupleType>::type Type;
+	};
 };
 
 // const member function pointer
@@ -94,7 +94,7 @@ struct FunctionTraits<R(C::*)(Args...) const>
 	typedef R ReturnType;
 	typedef C ClassType;
 	static const unsigned int ArgCount = sizeof...(Args);
- 
+
 	template<unsigned int N>
 	struct Arg
 	{
@@ -110,7 +110,7 @@ struct FunctionTraits<R(*)(Args...)>
 	typedef R Type(Args...);
 	typedef R ReturnType;
 	static const unsigned int ArgCount = sizeof...(Args);
-    
+
 	template<unsigned int N>
 	struct Arg
 	{

@@ -39,7 +39,7 @@ public:
 	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const = 0;
 	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
 	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
-	
+
 	inline static unsigned int getInstanceCount()
 	{
 		return s_instanceCount;
@@ -65,9 +65,9 @@ public:
 		, m_reentrancyFlag(isReentrant)
 	{
 		s_instanceCount++;
-        m_debugColor[0] = 1.0f;
-        m_debugColor[1] = 1.0f;
-        m_debugColor[2] = 1.0f;
+		m_debugColor[0] = 1.0f;
+		m_debugColor[1] = 1.0f;
+		m_debugColor[2] = 1.0f;
 	}
 
 	virtual ~Task()
@@ -138,18 +138,18 @@ public:
 	{
 		m_collector = collector;
 	}
-    
-    inline const float* getDebugColor() const
-    {
-        return m_debugColor;
-    }
-    
-    inline void setDebugColor(float color[3])
-    {
-        m_debugColor[0] = color[0];
-        m_debugColor[1] = color[1];
-        m_debugColor[2] = color[2];
-    }
+
+	inline const float* getDebugColor() const
+	{
+		return m_debugColor;
+	}
+
+	inline void setDebugColor(float color[3])
+	{
+		m_debugColor[0] = color[0];
+		m_debugColor[1] = color[1];
+		m_debugColor[2] = color[2];
+	}
 
 	inline const std::function<void()>& getFunction() const
 	{
@@ -232,22 +232,22 @@ public:
 		auto fut = p->get_future().share();
 		auto t = std::make_shared<Task<ThenReturnType>>(name, false, true);
 		Task<ThenReturnType>& tref = *t;
-        auto tf = std::function<void()>([this, &tref, f]
+		auto tf = std::function<void()>([this, &tref, f]
 		{
 			trySetFuncResult(*tref.getPromise(), f, m_future,
 				std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 				std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-                std::is_convertible<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
-                //std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+				std::is_convertible<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
+			//std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 
 			tref.setStatus(TsDone);
 		});
-		
+
 		t->movePromise(std::move(p));
 		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 		t->addDependencies(this->shared_from_this());
-		
+
 		m_continuation = t;
 
 		return t;
@@ -265,7 +265,7 @@ private:
 	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
 	std::shared_ptr<TimeIntervalCollector> m_collector;
 	std::string m_name;
-    float m_debugColor[3];
+	float m_debugColor[3];
 	TaskStatus m_status;
 	bool m_isReentrant;
 	bool m_isContinuation;
