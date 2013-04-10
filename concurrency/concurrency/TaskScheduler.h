@@ -63,8 +63,6 @@ public:
 
 		// signal threads to exit
 		{
-			auto p = std::make_shared<std::promise<void>>();
-			auto fut = p->get_future().share();
 			auto t = std::make_shared<Task<void>>("killThreads");
 			Task<void>& tref = *t;
 			auto tf = std::function<void()>([this, &tref]
@@ -73,8 +71,6 @@ public:
 				tref.getPromise()->set_value();
 				tref.setStatus(TsDone);
 			});
-			t->movePromise(std::move(p));
-			t->moveFuture(std::move(fut));
 			t->moveFunction(std::move(tf));
 
 			m_queue.push(t);
@@ -96,27 +92,29 @@ public:
 
 	// ReturnType Func(...) w/o dependency
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::string& name = "", const float* color = nullptr) const
 	{
 		return createTaskWithoutDependency(
 			f,
 			name,
+			color,
 			std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 			std::is_void<typename FunctionTraits<Func>::ReturnType>());
 	}
 
 	// ReturnType Func(void) with dependencies
 	template<typename Func, typename T>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name = "") const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name = "", const float* color = nullptr) const
 	{
 		return createTaskWithDependency(
 			f,
 			dependency,
 			name,
+			color, 
 			std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 			std::is_void<typename FunctionTraits<Func>::ReturnType>(),
 			std::is_convertible<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
-		//std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+		//	std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 	}
 
 	// join heterogeneous tasks
@@ -132,12 +130,26 @@ public:
 	{
 		return joinTasks(c);
 	}
+	
+	// run task chain
+	template<typename T>
+	void run(std::shared_ptr<Task<T>>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	{
+		std::vector<std::shared_ptr<TaskBase>> queue;
+		enqueue(t, queue, collector);
+		
+		for (auto qt : queue)
+		{
+			assert(qt.get() != nullptr);
+			(*qt)();
+		}
+	}
 
 	// dispatch task chain
 	template<typename T>
 	void dispatch(std::shared_ptr<Task<T>>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
 	{
-		ConcurrentQueueType<std::shared_ptr<TaskBase>> queue;
+		std::vector<std::shared_ptr<TaskBase>> queue;
 		enqueue(t, queue, collector);
 		schedule(queue);
 	}
@@ -165,34 +177,28 @@ public:
 private:
 
 	template<typename Func, typename T, typename U>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, const std::string& name, T argIsVoid, U fIsVoid) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, const std::string& name, const float* color, T argIsVoid, U fIsVoid) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ReturnType>>(name);
+		auto t = std::make_shared<Task<ReturnType>>(name, color);
 		Task<ReturnType>& tref = *t;
 		auto tf = std::function<void()>([&tref, f, argIsVoid, fIsVoid]
 		{
 			trySetFuncResult(*tref.getPromise(), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
 			tref.setStatus(TsDone);
 		});
-		t->movePromise(std::move(p));
-		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 
 		return t;
 	}
 
 	template<typename Func, typename T, typename U, typename V, typename X>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name, U argIsVoid, V fIsVoid, X argIsAssignable) const
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name, const float* color, U argIsVoid, V fIsVoid, X argIsAssignable) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ReturnType>>(name, true);
+		auto t = std::make_shared<Task<ReturnType>>(name, color);
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, f, tw, dependency, argIsVoid, fIsVoid, argIsAssignable]
 		{
@@ -211,8 +217,6 @@ private:
 				assert(false);
 			}
 		});
-		t->movePromise(std::move(p));
-		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 		t->addDependencies(dependency);
 
@@ -224,9 +228,7 @@ private:
 	{
 		typedef std::tuple<T, U, Args...> ReturnType;
 
-		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ReturnType>>("joinTasks", true);
+		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, f0, f1, fn...]
 		{
@@ -239,8 +241,6 @@ private:
 				assert(false);
 			}
 		});
-		t->movePromise(std::move(p));
-		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 		t->addDependencies(f0, f1, fn...);
 
@@ -252,9 +252,7 @@ private:
 	{
 		typedef std::vector<typename TaskContainer::value_type::element_type::ReturnType> ReturnType;
 
-		auto p = std::make_shared<std::promise<ReturnType>>();
-		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ReturnType>>("joinTasks", true);
+		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
 		std::weak_ptr<Task<ReturnType>> tw = t;
 		auto tf = std::function<void()>([this, tw, c]
 		{
@@ -267,8 +265,6 @@ private:
 				assert(false);
 			}
 		});
-		t->movePromise(std::move(p));
-		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 		t->addDependencies(c);
 
@@ -433,13 +429,13 @@ private:
 		}
 	}
 
-	void schedule(ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue) const
+	void schedule(std::vector<std::shared_ptr<TaskBase>>& queue) const
 	{
 		unsigned int c = 0;
-		std::shared_ptr<TaskBase> t;
-		while (queue.try_pop(t))
+		for (auto t : queue)
 		{
 			assert(t.get() != nullptr);
+			t->setStatus(TsScheduledOnce);
 			m_queue.push(t);
 			c++; // is awesome
 		}
@@ -458,20 +454,23 @@ private:
 		}
 	}
 
-	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, ConcurrentQueueType<std::shared_ptr<TaskBase>>& queue, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, std::vector<std::shared_ptr<TaskBase>>& queue, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
 	{
 		unsigned int count = 0;
+		
+		queue.reserve(queue.size() + t->getDependencies().size() + 1);
 
 		for (auto& d : t->getDependencies())
 			count += enqueue(d, queue, collector);
 
+		t->setStatus(TsPending);
 		t->setTimeIntervalCollector(collector);
 
 		if (!t->isContinuation())
 		{
 			count++;
 			t->setStatus(TsPending);
-			queue.push(t);
+			queue.push_back(t);
 		}
 
 		return count;

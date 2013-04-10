@@ -103,6 +103,7 @@ int main(int argc, char* argv[])
 	glewExperimental = true;
 
 	auto glfwInitResult = glfwInit();
+	glfwSwapInterval(1);
 	auto glfwOpenWindowResult = glfwOpenWindow(1280, 720, 8, 8, 8, 0, 0, 0, GLFW_WINDOW);
 	auto glewInitResult = glewInit();
 
@@ -112,10 +113,9 @@ int main(int argc, char* argv[])
 
 		return -1;
 	}
-
+	
 	TaskScheduler scheduler;
-	shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
-
+	
 	auto& threads = scheduler.getThreads();
 	vector<thread::id> threadIds;
 	threadIds.reserve(threads.size() + 1);
@@ -127,32 +127,49 @@ int main(int argc, char* argv[])
 	glClearDepth(0.0);
 	glClearStencil(0);
 
-	float color0[3] = { 0.8f, 0.2f, 0.2f };
-	float color1[3] = { 0.2f, 0.8f, 0.2f };
-	float color2[3] = { 0.2f, 0.2f, 0.8f };
-
+	float red[3] = { 0.8f, 0.2f, 0.2f };
+	float green[3] = { 0.2f, 0.8f, 0.2f };
+	float blue[3] = { 0.2f, 0.2f, 0.8f };
+	float yellow[3] = { 1.0f, 1.0f, 0.0f };
+	float cyan[3] = { 0.0f, 1.0f, 1.0f };
+	float magenta[3] = { 1.0f, 0.0f, 1.0f };
+	float pink[3] = { 1.0f, 0.5f, 1.0f };
+	float gray[3] = { 0.5f, 0.5f, 0.5f };
+	
 	vector<unique_ptr<unsigned>> images;
-	const unsigned int imageSize = 512;
-	const unsigned int imageCnt = 64;
+	const unsigned int imageSize = 256;
+	const unsigned int imageCnt = 32;
 	for (unsigned int i = 0; i < imageCnt; i++)
 		images.push_back(unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 
-	auto lastFrameStart = chrono::high_resolution_clock::now();
-	while (glfwGetWindowParam(GLFW_OPENED))
+	shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
+	auto frameStart = chrono::high_resolution_clock::now();
+	auto lastFrameStart = frameStart;
+	auto drawIntervalsTimeStart = frameStart;
+	
+	auto updateWindowTitle = scheduler.createTask([&frameStart, &lastFrameStart]
 	{
-		auto frameStart = chrono::high_resolution_clock::now();
-		auto dt = chrono::duration_cast<chrono::nanoseconds>(frameStart - lastFrameStart).count();
-		lastFrameStart = frameStart;
-		auto fps = 1e9 / double(dt);
-
-		stringstream str;
-		str << "conc11 (OpenGL " << getGLVersion() << ")" << " " << to_string(fps) << " fps";
-		glfwSetWindowTitle(str.str().c_str());
-
+	  auto dt = chrono::duration_cast<chrono::nanoseconds>(frameStart - lastFrameStart).count();
+	  auto fps = 1e9 / double(dt);
+	  
+	  stringstream str;
+	  str << "conc11 (OpenGL " << getGLVersion() << ")" << " " << to_string(fps) << " fps";
+	  glfwSetWindowTitle(str.str().c_str());
+	  
+	}, "updateWindowTitle", cyan);
+	
+	auto clear = scheduler.createTask([]
+	{
 		glClear(GL_COLOR_BUFFER_BIT);
-
-		scheduler.waitJoin();
-
+	}, "clear", pink);
+	
+	auto swap = scheduler.createTask([]
+	{
+		glfwSwapBuffers();
+	}, "swap", yellow);
+	
+	auto drawIntervals = scheduler.createTask([&threadIds, &drawIntervalsTimeStart, &collector]
+	{
 		float dy = 2.0f / threadIds.size();
 		float sy = 0.95f * dy;
 		const TimeIntervalCollector::ContainerType& intervals = collector->getIntervals();
@@ -163,16 +180,17 @@ int main(int argc, char* argv[])
 			for (auto it = ip.first; it != ip.second; it++)
 			{
 				auto& ti = (*it).second;
-
+				
 				glColor3f(ti.debugColor[0], ti.debugColor[1], ti.debugColor[2]);
-
-				auto start = chrono::duration_cast<chrono::nanoseconds>(ti.start - frameStart).count();
+				
+				auto start = chrono::duration_cast<chrono::nanoseconds>(ti.start - drawIntervalsTimeStart).count();
 				auto duration = chrono::duration_cast<chrono::nanoseconds>(ti.end - ti.start).count();
-
-				float x = -1.0f + 2.0f * static_cast<float>(start) / 1e9f;
+				
+				const float scale = 24.0f;
+				float x = -1.0f + scale * 2.0f * static_cast<float>(start) / 1e9f;
 				float y = 1.0f - (threadIndex * dy);
-				float sx = 2.0f * static_cast<float>(duration) / 1e9f;
-
+				float sx = scale * 2.0f * static_cast<float>(duration) / 1e9f;
+				
 				glBegin(GL_TRIANGLES);
 				{
 					glVertex3f(x, y, 0.0f);
@@ -188,39 +206,54 @@ int main(int argc, char* argv[])
 				}
 				glEnd();
 			}
-
+			
 			threadIndex++;
 		}
-
+		
 		collector->clear();
-
+		
+	}, "drawIntervals", blue);
+	
+	auto createWork = scheduler.createTask([&scheduler, &collector, &red, &green, &blue, &magenta, &images, imageSize, imageCnt]
+	{
 		vector<shared_ptr<Task<unsigned int>>> tasks;
+		
 		for (unsigned int i = 0; i < imageCnt; i++)
 		{
 			float color[3];
-			lerp(color0, color1, float(i) / imageCnt, color);
-
+			lerp(red, green, float(i) / imageCnt, color);
+			
 			tasks.push_back(scheduler.createTask([i, imageSize, &images]
 			{
 				mandel(0, imageSize, imageSize, 0, imageSize, imageSize, images[i].get());
 				return i;
-			}, string("mandel") + to_string(i)));
-			tasks.back()->setDebugColor(color);
+			}, string("mandel") + to_string(i), color));
 		}
-
-		auto t0 = scheduler.join(tasks);
-		t0->setDebugColor(color2);
-		auto t1 = t0->then([](vector<unsigned int> vals)
+		
+		auto t = scheduler.join(tasks)->then([](vector<unsigned int> vals)
 		{
 			return accumulate(begin(vals), end(vals), 0U);
-		}, "t1");
+		}, "t", magenta);
+		
+		scheduler.dispatch(t, collector);
+		
+	}, "createWork", gray);
+	
+	unsigned int frameIndex = 0;
+	while (glfwGetWindowParam(GLFW_OPENED))
+	{
+		frameIndex++;
+		lastFrameStart = frameStart;
+		drawIntervalsTimeStart = frameStart;
+		frameStart = chrono::high_resolution_clock::now();
 
-		scheduler.dispatch(t1, collector);
-
-		glfwSwapBuffers();
+		scheduler.run(clear, collector);
+		scheduler.run(drawIntervals, collector);
+		scheduler.dispatch(createWork, collector);
+		scheduler.run(updateWindowTitle, collector);
+		scheduler.waitJoin();
+		scheduler.run(swap, collector);
 	}
-
-	scheduler.waitJoin();
 
 	glfwTerminate();
 

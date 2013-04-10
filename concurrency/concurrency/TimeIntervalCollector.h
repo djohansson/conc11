@@ -40,6 +40,7 @@ public:
 	};
 
 	typedef ConcurrentUnorderedMultiMapType<std::thread::id, TimeInterval, std::hash<std::thread::id>> ContainerType;
+	typedef std::pair<std::thread::id, TimeInterval> HandleType;
 
 	TimeIntervalCollector()
 	{ }
@@ -47,19 +48,16 @@ public:
 	~TimeIntervalCollector()
 	{ }
 
-	inline ContainerType::iterator begin()
+	inline HandleType begin()
 	{
-		auto result = m_intervals.insert(std::make_pair(std::this_thread::get_id(), TimeInterval(m_clock.now())));
-#ifdef _MSC_VER // using ppl
-		return result;
-#else // using tbb
-		return result.first;
-#endif
+		return std::make_pair(std::this_thread::get_id(), TimeInterval(m_clock.now()));
 	}
 
-	inline void end(ContainerType::iterator handle)
+	inline void end(HandleType handle)
 	{
-		(*handle).second.end = m_clock.now();
+		handle.second.end = m_clock.now();
+
+		m_intervals.insert(handle);
 	}
 
 	inline void clear()
@@ -88,7 +86,8 @@ public:
 		if (m_collector)
 		{
 			m_handle = m_collector->begin();
-			TimeIntervalCollector::TimeInterval& ti = (*m_handle).second;
+			
+			TimeIntervalCollector::TimeInterval& ti = m_handle.second;
 			ti.debugName = debugName;
 			if (debugColor != nullptr)
 			{
@@ -111,7 +110,7 @@ private:
 	ScopedTimeInterval& operator=(const ScopedTimeInterval&);
 
 	std::shared_ptr<TimeIntervalCollector> m_collector;
-	TimeIntervalCollector::ContainerType::iterator m_handle;
+	TimeIntervalCollector::HandleType m_handle;
 };
 
 }

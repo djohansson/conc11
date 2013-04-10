@@ -34,7 +34,6 @@ public:
 	virtual void operator()() = 0;
 	virtual TaskStatus getStatus() const = 0;
 	virtual void setStatus(TaskStatus status) = 0;
-	virtual bool isReentrant() const = 0;
 	virtual bool isContinuation() const = 0;
 	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const = 0;
 	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
@@ -57,17 +56,25 @@ public:
 
 	typedef T ReturnType;
 
-	Task(const std::string& name = "", bool isReentrant = false, bool isContinuation = false)
+	Task(const std::string& name = "", const float* color = nullptr, bool isContinuation = false)
 		: m_name(name)
 		, m_status(TsInvalid)
-		, m_isReentrant(isReentrant)
 		, m_isContinuation(isContinuation)
-		, m_reentrancyFlag(isReentrant)
 	{
 		s_instanceCount++;
-		m_debugColor[0] = 1.0f;
-		m_debugColor[1] = 1.0f;
-		m_debugColor[2] = 1.0f;
+		
+		if (color)
+		{
+			m_debugColor[0] = color[0];
+			m_debugColor[1] = color[1];
+			m_debugColor[2] = color[2];
+		}
+		else
+		{
+			m_debugColor[0] = 1.0f;
+			m_debugColor[1] = 1.0f;
+			m_debugColor[2] = 1.0f;
+		}
 	}
 
 	virtual ~Task()
@@ -78,28 +85,27 @@ public:
 
 	virtual void operator()() final
 	{
-		bool expected = m_isReentrant;
-		if (m_reentrancyFlag.compare_exchange_strong(expected, true))
+		assert(m_function);
+				
 		{
-			assert(m_function);
+			ScopedTimeInterval scope(m_collector, m_name, m_debugColor);
+			
+			m_promise = std::make_shared<std::promise<ReturnType>>();
+			m_future = m_promise->get_future().share();
+			m_function();
+		}
 
+		assert(m_status != TsInvalid);
+
+		if (m_status == TsDone && !m_continuation.expired())
+		{
+			if (std::shared_ptr<TaskBase> c = m_continuation.lock())
 			{
-				ScopedTimeInterval scope(m_collector, m_name, m_debugColor);
-				m_function();
+				(*c)();
 			}
-
-			assert(m_status != TsInvalid);
-
-			if (m_status == TsDone && !m_continuation.expired())
+			else
 			{
-				if (std::shared_ptr<TaskBase> c = m_continuation.lock())
-				{
-					(*c)();
-				}
-				else
-				{
-					assert(false);
-				}
+				assert(false);
 			}
 		}
 	}
@@ -112,11 +118,6 @@ public:
 	virtual void setStatus(TaskStatus status) final
 	{
 		m_status = status;
-	}
-
-	virtual bool isReentrant() const final
-	{
-		return m_isReentrant;
 	}
 
 	virtual bool isContinuation() const final
@@ -144,7 +145,7 @@ public:
 		return m_debugColor;
 	}
 
-	inline void setDebugColor(float color[3])
+	inline void setDebugColor(const float color[3])
 	{
 		m_debugColor[0] = color[0];
 		m_debugColor[1] = color[1];
@@ -181,29 +182,9 @@ public:
 		return m_promise;
 	}
 
-	inline void setPromise(const std::shared_ptr<std::promise<ReturnType>>& p)
-	{
-		m_promise = p;
-	}
-
-	inline void movePromise(std::shared_ptr<std::promise<ReturnType>>&& p)
-	{
-		m_promise = std::forward<std::shared_ptr<std::promise<ReturnType>>>(p);
-	}
-
 	inline const std::shared_future<ReturnType>& getFuture() const
 	{
 		return m_future;
-	}
-
-	inline void setFuture(const std::shared_future<ReturnType>& fut)
-	{
-		m_future = fut;
-	}
-
-	inline void moveFuture(std::shared_future<ReturnType>&& fut)
-	{
-		m_future = std::forward<std::shared_future<ReturnType>>(fut);
 	}
 
 	template<typename U>
@@ -224,13 +205,11 @@ public:
 	}
 
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, const std::string& name = "")
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, const std::string& name = "", const float* color = nullptr)
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
-		auto p = std::make_shared<std::promise<ThenReturnType>>();
-		auto fut = p->get_future().share();
-		auto t = std::make_shared<Task<ThenReturnType>>(name, false, true);
+		auto t = std::make_shared<Task<ThenReturnType>>(name, color, true);
 		Task<ThenReturnType>& tref = *t;
 		auto tf = std::function<void()>([this, &tref, f]
 		{
@@ -238,13 +217,11 @@ public:
 				std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 				std::is_void<typename FunctionTraits<Func>::ReturnType>(),
 				std::is_convertible<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
-			//std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+			//	std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
 
 			tref.setStatus(TsDone);
 		});
 
-		t->movePromise(std::move(p));
-		t->moveFuture(std::move(fut));
 		t->moveFunction(std::move(tf));
 		t->addDependencies(this->shared_from_this());
 
@@ -267,9 +244,7 @@ private:
 	std::string m_name;
 	float m_debugColor[3];
 	TaskStatus m_status;
-	bool m_isReentrant;
 	bool m_isContinuation;
-	std::atomic<bool> m_reentrancyFlag;
 };
 
 } // namespace conc11
