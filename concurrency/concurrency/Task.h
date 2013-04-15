@@ -75,6 +75,8 @@ public:
 			m_debugColor[1] = 1.0f;
 			m_debugColor[2] = 1.0f;
 		}
+
+		reset();
 	}
 
 	virtual ~Task()
@@ -90,8 +92,6 @@ public:
 		{
 			ScopedTimeInterval scope(m_collector, m_name, m_debugColor);
 			
-			m_promise = std::make_shared<std::promise<ReturnType>>();
-			m_future = m_promise->get_future().share();
 			m_function();
 		}
 
@@ -117,6 +117,9 @@ public:
 
 	virtual void setStatus(TaskStatus status) final
 	{
+		if (m_status == TsDone && status != TsDone)
+			reset();
+
 		m_status = status;
 	}
 
@@ -138,6 +141,12 @@ public:
 	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) final
 	{
 		m_collector = collector;
+	}
+
+	inline void reset()
+	{
+		m_promise = std::make_shared<std::promise<ReturnType>>();
+		m_future = m_promise->get_future().share();
 	}
 
 	inline const float* getDebugColor() const
@@ -216,8 +225,7 @@ public:
 			trySetFuncResult(*tref.getPromise(), f, m_future,
 				std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 				std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-				std::is_convertible<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
-			//	std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+				std::is_assignable<ReturnType, typename FunctionTraits<Func>::template Arg<0>::Type>());
 
 			tref.setStatus(TsDone);
 		});

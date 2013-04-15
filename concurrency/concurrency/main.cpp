@@ -104,7 +104,7 @@ int main(int argc, char* argv[])
 
 	auto glfwInitResult = glfwInit();
 	glfwSwapInterval(1);
-	auto glfwOpenWindowResult = glfwOpenWindow(1280, 720, 8, 8, 8, 0, 0, 0, GLFW_WINDOW);
+	auto glfwOpenWindowResult = glfwOpenWindow(1280, 720, 8, 8, 8, 0, 0, 0, GLFW_FULLSCREEN);
 	auto glewInitResult = glewInit();
 
 	if (!glfwInitResult || !glfwOpenWindowResult || glewInitResult != GLEW_OK)
@@ -142,18 +142,24 @@ int main(int argc, char* argv[])
 	for (unsigned int i = 0; i < imageCnt; i++)
 		images.push_back(unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 
-	shared_ptr<TimeIntervalCollector> collector = make_shared<TimeIntervalCollector>();
+	shared_ptr<TimeIntervalCollector> collector0 = make_shared<TimeIntervalCollector>();
+	shared_ptr<TimeIntervalCollector> collector1 = make_shared<TimeIntervalCollector>();
+	shared_ptr<TimeIntervalCollector> collector, lastFrameCollector;
+	
 	auto frameStart = chrono::high_resolution_clock::now();
 	auto lastFrameStart = frameStart;
 	auto drawIntervalsTimeStart = frameStart;
 	
 	unsigned int frameIndex = 0;
-	auto newFrame = scheduler.createTask([&frameIndex, &lastFrameStart, &frameStart, &drawIntervalsTimeStart]
+	auto newFrame = scheduler.createTask([&frameIndex, &lastFrameStart, &frameStart, &drawIntervalsTimeStart, &collector, &lastFrameCollector, &collector0, &collector1]
 	{
-		frameIndex++;
 		lastFrameStart = frameStart;
 		drawIntervalsTimeStart = frameStart;
 		frameStart = chrono::high_resolution_clock::now();
+		frameIndex++;
+		lastFrameCollector = collector;
+		collector = (frameIndex & 0x1 ? collector1 : collector0);
+		collector->clear();
 	}, "newFrame", gray);
 	
 	auto clear = scheduler.createTask([]
@@ -177,11 +183,14 @@ int main(int argc, char* argv[])
 		glfwSwapBuffers();
 	}, "swap", yellow);
 	
-	auto drawIntervals = scheduler.createTask([&threadIds, &drawIntervalsTimeStart, &collector]
+	auto drawIntervals = scheduler.createTask([&threadIds, &drawIntervalsTimeStart, &lastFrameCollector]
 	{
+		if (!lastFrameCollector)
+			return;
+		
 		float dy = 2.0f / threadIds.size();
 		float sy = 0.95f * dy;
-		const TimeIntervalCollector::ContainerType& intervals = collector->getIntervals();
+		const TimeIntervalCollector::ContainerType& intervals = lastFrameCollector->getIntervals();
 		unsigned int threadIndex = 0;
 		for (auto& threadId : threadIds)
 		{
@@ -218,9 +227,6 @@ int main(int argc, char* argv[])
 			
 			threadIndex++;
 		}
-		
-		collector->clear();
-		
 	}, "drawIntervals", blue);
 	
 	auto createWork = scheduler.createTask([&scheduler, &collector, &red, &green, &blue, &magenta, &images, imageSize, imageCnt]
@@ -251,10 +257,10 @@ int main(int argc, char* argv[])
 	while (glfwGetWindowParam(GLFW_OPENED))
 	{
 		scheduler.run(newFrame, collector);
-		scheduler.run(clear, collector);
-		scheduler.run(drawIntervals, collector);
 		scheduler.dispatch(createWork, collector);
 		scheduler.run(updateWindowTitle, collector);
+		scheduler.run(clear, collector);
+		scheduler.run(drawIntervals, collector);
 		scheduler.waitJoin();
 		scheduler.run(swap, collector);
 	}
