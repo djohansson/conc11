@@ -82,7 +82,6 @@ public:
 			t->join(); // will wake all threads due to std::notify_all_at_thread_exit
 
 		assert(m_queue.empty());
-		assert(TaskBase::getInstanceCount() == 0);
 	}
 
 	inline const std::vector<std::shared_ptr<std::thread>>& getThreads() const
@@ -113,8 +112,7 @@ public:
 			color, 
 			std::is_void<typename FunctionTraits<Func>::template Arg<0>::Type>(),
 			std::is_void<typename FunctionTraits<Func>::ReturnType>(),
-			std::is_convertible<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
-		//	std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>()); // does not compile with clang 4.2
+			std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
 	}
 
 	// join heterogeneous tasks

@@ -147,6 +147,20 @@ int main(int argc, char* argv[])
 	auto lastFrameStart = frameStart;
 	auto drawIntervalsTimeStart = frameStart;
 	
+	unsigned int frameIndex = 0;
+	auto newFrame = scheduler.createTask([&frameIndex, &lastFrameStart, &frameStart, &drawIntervalsTimeStart]
+	{
+		frameIndex++;
+		lastFrameStart = frameStart;
+		drawIntervalsTimeStart = frameStart;
+		frameStart = chrono::high_resolution_clock::now();
+	}, "newFrame", gray);
+	
+	auto clear = scheduler.createTask([]
+	{
+		glClear(GL_COLOR_BUFFER_BIT);
+	}, "clear", pink);
+	
 	auto updateWindowTitle = scheduler.createTask([&frameStart, &lastFrameStart]
 	{
 	  auto dt = chrono::duration_cast<chrono::nanoseconds>(frameStart - lastFrameStart).count();
@@ -157,11 +171,6 @@ int main(int argc, char* argv[])
 	  glfwSetWindowTitle(str.str().c_str());
 	  
 	}, "updateWindowTitle", cyan);
-	
-	auto clear = scheduler.createTask([]
-	{
-		glClear(GL_COLOR_BUFFER_BIT);
-	}, "clear", pink);
 	
 	auto swap = scheduler.createTask([]
 	{
@@ -238,15 +247,10 @@ int main(int argc, char* argv[])
 		scheduler.dispatch(t, collector);
 		
 	}, "createWork", gray);
-	
-	unsigned int frameIndex = 0;
+		
 	while (glfwGetWindowParam(GLFW_OPENED))
 	{
-		frameIndex++;
-		lastFrameStart = frameStart;
-		drawIntervalsTimeStart = frameStart;
-		frameStart = chrono::high_resolution_clock::now();
-
+		scheduler.run(newFrame, collector);
 		scheduler.run(clear, collector);
 		scheduler.run(drawIntervals, collector);
 		scheduler.dispatch(createWork, collector);
