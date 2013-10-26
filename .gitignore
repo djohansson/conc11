@@ -24,3 +24,5 @@
 *.pgc
 
 *.pgd
+
+*.user
