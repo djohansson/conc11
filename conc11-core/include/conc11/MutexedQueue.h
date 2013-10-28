@@ -29,7 +29,7 @@ public:
         return true;
     }
 
-    bool pop(T& ret)
+    bool try_pop(T& ret)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 

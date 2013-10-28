@@ -26,3 +26,15 @@
 *.pgd
 
 *.user
+
+*.user.*
+
+*.sln
+
+*.suo
+
+*.cache
+
+*.vcxproj
+
+*.vcxproj.filters

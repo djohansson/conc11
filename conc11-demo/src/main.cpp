@@ -5,6 +5,7 @@
 #include <QtGui/QOpenGLPaintDevice>
 #include <QtGui/QScreen>
 #include <QtGui/QPainter>
+#include <QtGui/QPaintEngine>
 
 #include <conc11/Task.h>
 #include <conc11/TaskScheduler.h>
@@ -85,8 +86,7 @@ private:
 	std::vector<std::thread::id> m_threadIds;
 	std::vector<std::unique_ptr<unsigned>> m_images;
 	
-	std::shared_ptr<conc11::TaskBase> m_newFrame;
-	std::shared_ptr<conc11::TaskBase> m_createWork;
+    std::shared_ptr<conc11::TaskBase> m_createWork;
 	std::shared_ptr<conc11::TaskBase> m_work;
 	std::shared_ptr<conc11::TaskBase> m_clear;
 	std::shared_ptr<conc11::TaskBase> m_updateFps;
@@ -103,6 +103,8 @@ private:
     QOpenGLShaderProgram* m_program;
 	std::vector<float> m_vertexBuffer;
 	std::vector<float> m_colorBuffer;
+
+    QPainter m_painter;
 	
     unsigned int m_frameIndex;
 };
@@ -128,39 +130,36 @@ MainWindow::MainWindow()
 	
 	m_frameStart = std::chrono::high_resolution_clock::now();
 	
-	m_newFrame = m_scheduler.createTask([this]
-	{
-		m_frameIndex++;
-		
-		m_lastFrameStart = m_frameStart;
-		m_frameStart = std::chrono::high_resolution_clock::now();
-		
-		m_lastFrameCollector = m_collector;
-		m_collector = m_collectors[m_frameIndex % 2];
-		m_collector->clear();
-	}, "newFrame", gray);
-	
 	m_clear = m_scheduler.createTask([this]
 	{
 		glClearColor(0, 0, 0.3f, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
+        m_painter.begin(m_device);
 	}, "clear", pink);
 	
 	m_updateFps = m_scheduler.createTask([this]
 	{
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
-		
-		QPainter painter(m_device);
-		painter.endNativePainting();
 
+        m_painter.setWindow(0, 0, width(), height());
+
+        //m_painter.paintEngine()->setSystemClip(QRegion(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio()));
+        //m_painter.paintEngine()->setSystemRect(QRect(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio()));
+
+        m_painter.setPen(Qt::blue);
+        m_painter.drawRect(0, 0, width(), height());
+        m_painter.setPen(Qt::red);
+        m_painter.setFont(QFont("Arial", 30));
+        m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
+
+        /*
         QRectF rect = QRectF(0, 0, width(), height());
 		painter.setPen(Qt::darkRed);
 		painter.drawRect(rect);
 		painter.setPen(Qt::white);
 		painter.drawText(rect, QString(std::to_string(fps).c_str()), QTextOption(Qt::AlignLeft|Qt::AlignTop));
-		
-		painter.beginNativePainting();
+        */
 	}, "updateFps", cyan);
 	
 	m_drawIntervals = m_scheduler.createTask([this]
@@ -266,16 +265,18 @@ MainWindow::MainWindow()
 			}
 			
 			threadIndex++;
-		}
-		
+        }
+
+        m_painter.beginNativePainting();
+
 		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 		
 		m_program->bind();
 
 		QMatrix4x4 matrix;
-		matrix.perspective(60, float(width()) / float(height()), 0.1, 100.0);
+		matrix.perspective(60, float(width()) / float(height()), 0.1f, 100.0f);
 		matrix.translate(0, 0, -2);
-		matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
+    //	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
 		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
@@ -284,17 +285,20 @@ MainWindow::MainWindow()
 		glEnableVertexAttribArray(0);
 		glEnableVertexAttribArray(1);
 		
-		glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 2);
+		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size() / 2);
 		
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(0);
 		
-		m_program->release();
-	}, "drawIntervals", blue);
+        m_program->release();
+
+        m_painter.endNativePainting();
+
+  }, "drawIntervals", blue);
 
 	
 	m_createWork = m_scheduler.createTask([this, imageSize, imageCnt]
-	{
+    {
         std::shared_ptr<conc11::Task<unsigned int>> branches[2];
 
         for (unsigned int j = 0; j < 2; j++)
@@ -313,7 +317,7 @@ MainWindow::MainWindow()
                 }, std::string("mandel") + std::to_string(i), color));
             }
 		
-            branches[j] = m_scheduler.join(tasks)->then([](std::vector<unsigned int> vals)
+            branches[j] = m_scheduler.join(tasks)->then([&](std::vector<unsigned int> vals) // wtf do we need capture by ref on vc 2012 ctp here!?
             {
                 return std::accumulate(begin(vals), end(vals), 0U);
             }, std::string("accumulate") + std::to_string(j), magenta);
@@ -329,6 +333,7 @@ MainWindow::MainWindow()
 	
 	m_swap = m_scheduler.createTask([this]
 	{
+        m_painter.end();
 		m_context->swapBuffers(this);
 	}, "swap", yellow);
 }
@@ -370,13 +375,21 @@ void MainWindow::initialize()
 
 void MainWindow::render()
 {
-	m_scheduler.run(m_newFrame, m_collector);
-	m_scheduler.run(m_createWork, m_collector);
+    m_frameIndex++;
+    m_lastFrameStart = m_frameStart;
+    m_lastFrameCollector = m_collector;
+
+    m_frameStart = std::chrono::high_resolution_clock::now();
+
+    m_collector = m_collectors[m_frameIndex % 2];
+    m_collector->clear();
+
+    m_scheduler.dispatch(m_createWork, m_collector);
 	m_scheduler.run(m_clear, m_collector);
 	m_scheduler.run(m_drawIntervals, m_collector);
 	m_scheduler.run(m_updateFps, m_collector);
-	m_scheduler.waitJoin(m_work);
-	m_scheduler.run(m_swap, m_collector);
+    m_scheduler.waitJoin(m_work);
+    m_scheduler.run(m_swap, m_collector);
 }
 
 int main(int argc, char **argv)

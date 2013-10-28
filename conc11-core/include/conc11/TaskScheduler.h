@@ -47,6 +47,7 @@ public:
 				}
 				catch (const std::future_error& e)
 				{
+					(void)e;
 					assert(false);
 				}
 				catch (...)
@@ -174,7 +175,7 @@ public:
 		do
         {
             std::shared_ptr<TaskBase> qt;
-			while (m_queue.pop(qt))
+			while (m_queue.try_pop(qt))
 			{
                 assert(qt.get() != nullptr);
                 (*qt)();
@@ -296,7 +297,7 @@ private:
 		{
 			// process main queue or sleep
             std::shared_ptr<TaskBase> t;
-			if (m_queue.pop(t))
+			if (m_queue.try_pop(t))
 			{
                 assert(t.get() != nullptr && !t->isContinuation());
                 (*t)();

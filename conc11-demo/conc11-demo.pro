@@ -1,6 +1,8 @@
+TARGET = conc11-demo
+
 CONFIG += debug_and_release
 CONFIG += c++11
-TARGET = conc11-demo
+CONFIG -= app_bundle
 
 CONFIG(debug, debug|release) {
     TARGET = $$join(TARGET,,,-debug)
@@ -19,7 +21,7 @@ INCLUDEPATH += $$PWD/../conc11-core/include
 DEPENDPATH += $$PWD/../conc11-core/include
 
 HEADERS += \
-    include/openglwindow.h
+    src/openglwindow.h
 
 SOURCES += \
     src/main.cpp \
