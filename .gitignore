@@ -38,3 +38,5 @@
 *.vcxproj
 
 *.vcxproj.filters
+
+moc_*.*
