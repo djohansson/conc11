@@ -78,11 +78,11 @@ inline static void trySetResult(std::promise<Fut>& p, Fut&& val)
 	}
 }
 
-inline static void trySetResult(std::promise<void>& p) 
+inline static void trySetResult(std::promise<UnitType>& p)
 {
 	try
 	{
-		p.set_value();
+		p.set_value(0);
 	}
 	catch (...)
 	{

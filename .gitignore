@@ -40,3 +40,19 @@
 *.vcxproj.filters
 
 moc_*.*
+
+*.pbxproj
+
+*.mak
+
+*.xcscheme
+
+*.xcuserstate
+
+*.xcsettings
+
+*.xccheckout
+
+*.xcworkspacedata
+
+*.plist

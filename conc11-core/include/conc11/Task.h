@@ -21,8 +21,6 @@ namespace conc11
 enum TaskStatus
 {
 	TsPending,
-	TsScheduledOnce,
-	TsScheduledPolling,
 	TsDone,
 	TsInvalid
 };
@@ -31,23 +29,24 @@ struct TaskBase /*abstract*/
 {
 	virtual void operator()() = 0;
 	virtual TaskStatus getStatus() const = 0;
-	virtual bool isContinuation() const = 0;
-	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const = 0;
-	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector() = 0;
-	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) = 0;
+	virtual void addDependency() const = 0;
+	virtual bool releaseDependency() const = 0;
+	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) = 0;
 };
+	
+typedef std::vector<std::shared_ptr<TaskBase>> TaskGroup;
 
 template<typename T>
-class Task : public TaskBase, public std::enable_shared_from_this<Task<T>>
+class Task : public TaskBase
 {
 public:
 
 	typedef T ReturnType;
 
-	Task(const std::string& name = "", const float* color = nullptr, bool isContinuation = false)
+	Task(const std::string& name = "", const float* color = nullptr)
 		: m_name(name)
 		, m_status(TsInvalid)
-		, m_isContinuation(isContinuation)
+		, m_waitCount(0)
 	{
 		if (color)
 		{
@@ -64,34 +63,39 @@ public:
 		
 		reset();
 	}
+	
+	~Task()
+	{
+		m_waiters.clear();
+	}
 
 	virtual void operator()() final
 	{
 		assert(m_function);
 		
-		TaskStatus status;
 		{
-			ScopedTimeInterval scope(m_collector, m_name, m_debugColor);
+			ScopedTimeInterval scope(m_name, m_debugColor);
 		
 			if (getStatus() == TsDone)
+			{
 				reset();
-
-			status = m_function();
-		}
-
-		if (status == TsDone && !m_continuation.expired())
-		{
-			if (std::shared_ptr<TaskBase> c = m_continuation.lock())
-			{
-				(*c)();
+				
+				for (auto t : m_waiters)
+				{
+					t->addDependency();
+				}
 			}
-			else
-			{
-				assert(false);
-			}
+
+			setStatus(m_function());
 		}
 		
-		setStatus(status);
+		assert(getStatus() == TsDone);
+	
+		for (auto t : m_waiters)
+		{
+			if (t->releaseDependency())
+				(*t)();
+		}
 	}
 
 	virtual TaskStatus getStatus() const final
@@ -99,24 +103,19 @@ public:
 		return m_status.load(std::memory_order_acquire);
 	}
 
-	virtual bool isContinuation() const final
+	virtual void addDependency() const final
 	{
-		return m_isContinuation;
+		addWaitCount();
 	}
 
-	virtual const std::vector<std::shared_ptr<TaskBase>>& getDependencies() const final
+	virtual bool releaseDependency() const final
 	{
-		return m_dependencies;
+		return releaseWaitCount();
 	}
-
-	virtual std::shared_ptr<TimeIntervalCollector> getTimeIntervalCollector() final
+	
+	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) final
 	{
-		return m_collector;
-	}
-
-	virtual void setTimeIntervalCollector(std::shared_ptr<TimeIntervalCollector> collector) final
-	{
-		m_collector = collector;
+		m_waiters.push_back(waiter);
 	}
 
 	inline const float* getDebugColor() const
@@ -146,16 +145,6 @@ public:
 		m_function = std::forward<std::function<TaskStatus()>>(f);
 	}
 
-	inline const std::weak_ptr<TaskBase>& getContinuation() const
-	{
-		return m_continuation;
-	}
-
-	inline void setContinuation(const std::shared_ptr<TaskBase>& c)
-	{
-		m_continuation = c;
-	}
-
 	inline const std::shared_ptr<std::promise<ReturnType>>& getPromise() const
 	{
 		return m_promise;
@@ -166,29 +155,12 @@ public:
 		return m_future;
 	}
 
-	template<typename U>
-	inline void addDependencies(const std::vector<std::shared_ptr<U>>& deps)
-	{
-		m_dependencies.insert(m_dependencies.end(), deps.begin(), deps.end());
-	}
-
-	template<typename U, typename... Args>
-	inline void addDependencies(const std::shared_ptr<Task<U>>& d0, const std::shared_ptr<Task<Args>>&... dn)
-	{
-		m_dependencies.push_back(d0);
-		addDependencies(dn...);
-	}
-
-	inline void addDependencies()
-	{
-	}
-
 	template<typename Func>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, const std::string& name = "", const float* color = nullptr)
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
-		auto t = std::make_shared<Task<ThenReturnType>>(name, color, true);
+		auto t = std::make_shared<Task<ThenReturnType>>(name, color);
 		Task<ThenReturnType>& tref = *t;
 		auto tf = std::function<TaskStatus()>([this, &tref, f]
 		{
@@ -199,12 +171,11 @@ public:
 			
 			return TsDone;
 		});
-
 		t->moveFunction(std::move(tf));
-		t->addDependencies(this->shared_from_this());
-
-		m_continuation = t;
-
+		
+		t->addDependency();
+		addWaiter(t);
+		
 		return t;
 	}
 
@@ -213,27 +184,35 @@ private:
 	Task(const Task&);
 	Task& operator=(const Task&);
 	
-	void setStatus(TaskStatus status)
+	inline void setStatus(TaskStatus status) const
 	{
 		m_status.store(status, std::memory_order_release);
 	}
 	
-	void reset()
+	inline void reset()
 	{
 		m_promise = std::make_shared<std::promise<ReturnType>>();
 		m_future = m_promise->get_future().share();
 	}
 
+	inline void addWaitCount() const
+	{
+		m_waitCount++;
+	}
+
+	inline bool releaseWaitCount() const
+	{
+		return (--m_waitCount == 0);
+	}
+
 	std::function<TaskStatus()> m_function;
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
-	std::weak_ptr<TaskBase> m_continuation;
-	std::vector<std::shared_ptr<TaskBase>> m_dependencies;
-	std::shared_ptr<TimeIntervalCollector> m_collector;
+	std::vector<std::shared_ptr<TaskBase>> m_waiters;
 	std::string m_name;
 	float m_debugColor[3];
-	std::atomic<TaskStatus> m_status;
-	bool m_isContinuation;
+	mutable std::atomic<TaskStatus> m_status;
+	mutable std::atomic<uint32_t> m_waitCount;
 };
 
 } // namespace conc11

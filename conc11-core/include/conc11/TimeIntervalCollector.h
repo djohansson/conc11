@@ -81,17 +81,18 @@ private:
 	ContainerType m_intervals;
 	std::mutex m_mutex;
 };
+	
+extern std::shared_ptr<TimeIntervalCollector> g_timeIntervalCollector;
 
 class ScopedTimeInterval
 {
 public:
 
-	ScopedTimeInterval(std::shared_ptr<TimeIntervalCollector> collector, const std::string& debugName = "", const float* debugColor = nullptr)
-		: m_collector(collector)
+	ScopedTimeInterval(const std::string& debugName = "", const float* debugColor = nullptr)
 	{
-		if (m_collector)
+		if (g_timeIntervalCollector)
 		{
-			m_handle = m_collector->begin();
+			m_handle = g_timeIntervalCollector->begin();
 			
 			TimeIntervalCollector::TimeInterval& ti = m_handle.second;
 			ti.debugName = debugName;
@@ -106,8 +107,8 @@ public:
 
 	~ScopedTimeInterval()
 	{
-		if (m_collector)
-			m_collector->end(m_handle);
+		if (g_timeIntervalCollector)
+			g_timeIntervalCollector->end(m_handle);
 	}
 
 private:
@@ -115,7 +116,6 @@ private:
 	ScopedTimeInterval(const ScopedTimeInterval&);
 	ScopedTimeInterval& operator=(const ScopedTimeInterval&);
 
-	std::shared_ptr<TimeIntervalCollector> m_collector;
 	TimeIntervalCollector::HandleType m_handle;
 };
 

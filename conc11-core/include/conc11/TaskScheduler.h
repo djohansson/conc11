@@ -3,7 +3,6 @@
 #include "FunctionTraits.h"
 #include "Task.h"
 #include "TaskUtils.h"
-#include "TimeIntervalCollector.h"
 #include "TaskTypes.h"
 #include "Thread.h"
 
@@ -22,9 +21,12 @@
 
 namespace conc11
 {
-
+	
 template<unsigned int N>
-struct JoinAndSetTupleValueRecursive;
+struct AddDependencyRecursive;
+	
+template<unsigned int N>
+struct SetTupleValueRecursive;
 
 class TaskScheduler
 {	
@@ -68,8 +70,8 @@ public:
 
 		// signal threads to exit
 		{
-			auto t = std::make_shared<Task<void>>("killThreads");
-			Task<void>& tref = *t;
+			auto t = std::make_shared<Task<UnitType>>("killThreads");
+			Task<UnitType>& tref = *t;
 			auto tf = std::function<TaskStatus()>([this, &tref]
 			{
 				m_running = false;
@@ -81,7 +83,7 @@ public:
 			t->moveFunction(std::move(tf));
 			
             m_queue.push(t);
-			wakeOne();
+			wakeThreads();
 		}
 
         m_threads.clear(); // = join
@@ -119,54 +121,59 @@ public:
 			std::is_void<typename FunctionTraits<Func>::ReturnType>(),
 			std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
 	}
-
-	// join heterogeneous tasks
-	template<typename T, typename U, typename... Args>
-	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
+	
+	// join heterogeneous tasks without passing any return values
+	std::shared_ptr<Task<UnitType>> join(const TaskGroup& g) const
 	{
-		return joinTasks(f0, f1, fn...);
+		return joinTasks(g);
 	}
-
-	// join homogeneous tasks
+	
+	/*
+	// join homogeneous tasks with passed returned values
 	template<typename TaskContainer>
 	std::shared_ptr<Task<std::vector<typename TaskContainer::value_type::element_type::ReturnType>>> join(const TaskContainer& c) const
 	{
 		return joinTasks(c);
 	}
+
+	// join heterogeneous tasks with passed returned values
+	template<typename T, typename U, typename... Args>
+	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
+	{
+		return joinTasks(f0, f1, fn...);
+	}
+	*/
 	
 	// run task chain
-	void run(std::shared_ptr<TaskBase>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	inline void run(const std::shared_ptr<TaskBase>& t) const
 	{		
-		std::vector<std::shared_ptr<TaskBase>> queue;
-		enqueue(t, queue, collector);
-		
-		for (auto qt : queue)
-		{
-			assert(qt.get() != nullptr);
-			(*qt)();
-		}
+		assert(t.get() != nullptr);
+		(*t)();
 	}
 	
 	template<typename T>
-	void run(std::shared_ptr<Task<T>>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	inline void run(const std::shared_ptr<Task<T>>& t) const
 	{
-		std::shared_ptr<TaskBase> tb = std::static_pointer_cast<TaskBase>(t);
-		run(tb, collector);
+		auto tb = std::static_pointer_cast<TaskBase>(t);
+		run(tb);
 	}
 
 	// dispatch task chain
-	void dispatch(std::shared_ptr<TaskBase>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	inline void dispatch(const std::shared_ptr<TaskBase>& t) const
 	{
-		std::vector<std::shared_ptr<TaskBase>> queue;
-		enqueue(t, queue, collector);
-		schedule(queue);
+		schedule(t);
+	}
+	
+	inline void dispatch(const TaskGroup& tg) const
+	{
+		schedule(tg);
 	}
 	
 	template<typename T>
-	void dispatch(std::shared_ptr<Task<T>>& t, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
+	inline void dispatch(const std::shared_ptr<Task<T>>& t) const
 	{
-		std::shared_ptr<TaskBase> tb = std::static_pointer_cast<TaskBase>(t);
-		dispatch(tb, collector);
+		auto tb = std::static_pointer_cast<TaskBase>(t);
+		dispatch(tb);
 	}
 
 	// join in on task queue, emptying the entire queue or returning once task t has finished
@@ -216,80 +223,95 @@ private:
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
 		auto t = std::make_shared<Task<ReturnType>>(name, color);
-		std::weak_ptr<Task<ReturnType>> tw = t;
-		auto tf = std::function<TaskStatus()>([this, f, tw, dependency, argIsVoid, fIsVoid, argIsAssignable]
+		Task<ReturnType>& tref = *t;
+		auto tf = std::function<TaskStatus()>([&tref, f, dependency, argIsVoid, fIsVoid, argIsAssignable]
 		{
-			if (auto t = tw.lock())
-			{
-				return pollDependencyAndCallOrResubmit(
-					f, 
-					t,
-					dependency,
-					argIsVoid,
-					fIsVoid,
-					argIsAssignable);
-			}
-			else
-			{
-				assert(false);
-				return TsInvalid;
-			}
+			trySetFuncResult(*tref.getPromise(), f, dependency->getFuture(), argIsVoid, fIsVoid, argIsAssignable);
+			
+			return TsDone;
 		});
 		t->moveFunction(std::move(tf));
-		t->addDependencies(dependency);
+		
+		t->addDependency();
+		dependency->addWaiter(t);
 
 		return t;
 	}
-
-	template<typename T, typename U, typename... Args>
-	std::shared_ptr<Task<std::tuple<T, U, Args...>>> joinTasks(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn/*, const std::string& name*/) const
+	
+	std::shared_ptr<Task<UnitType>> joinTasks(const TaskGroup& g) const
 	{
-		typedef std::tuple<T, U, Args...> ReturnType;
-
-		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
-		std::weak_ptr<Task<ReturnType>> tw = t;
-		auto tf = std::function<TaskStatus()>([this, tw, f0, f1, fn...]
+		auto t = std::make_shared<Task<UnitType>>("joinTasks");
+		Task<UnitType>& tref = *t;
+		auto tf = std::function<TaskStatus()>([&tref]
 		{
-			if (auto t = tw.lock())
-			{
-				return pollDependenciesAndJoinOrResubmit(t, f0, f1, fn...);
-			}
-			else
-			{
-				assert(false);
-				return TsInvalid;
-			}
+			trySetResult(*tref.getPromise());
+			
+			return TsDone;
 		});
 		t->moveFunction(std::move(tf));
-		t->addDependencies(f0, f1, fn...);
-
+		
+		for (auto f : g)
+		{
+			t->addDependency();
+			f->addWaiter(t);
+		}
+		
 		return t;
 	}
-
+	
+	/*
 	template<typename TaskContainer>
-	std::shared_ptr<Task<std::vector<typename TaskContainer::value_type::element_type::ReturnType>>> joinTasks(const TaskContainer& c/*, const std::string& name*/) const
+	std::shared_ptr<Task<std::vector<typename TaskContainer::value_type::element_type::ReturnType>>> joinTasks(const TaskContainer& c) const
 	{
 		typedef std::vector<typename TaskContainer::value_type::element_type::ReturnType> ReturnType;
-
+		
 		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
-		std::weak_ptr<Task<ReturnType>> tw = t;
-		auto tf = std::function<TaskStatus()>([this, tw, c]
+		Task<ReturnType>& tref = *t;
+		auto tf = std::function<TaskStatus()>([&tref, c] // fixme: no shared_ptr:s can go in here
 		{
-			if (auto t = tw.lock())
-			{
-				return pollDependenciesAndJoinOrResubmit(t, c);
-			}
-			else
-			{
-				assert(false);
-				return TsInvalid;
-			}
+			ReturnType ret;
+			ret.reserve(c.size());
+			
+			for (auto n : c)
+				ret.push_back(n->getFuture().get());
+			
+			trySetResult(*tref.getPromise(), std::move(ret));
+			
+			return TsDone;
 		});
 		t->moveFunction(std::move(tf));
-		t->addDependencies(c);
+		
+		for (auto f : c)
+		{
+			t->addDependency();
+			f->addWaiter(t);
+		}
+		
+		return t;
+	}
+
+	template<typename T, typename... Args>
+	std::shared_ptr<Task<std::tuple<T, Args...>>> joinTasks(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn) const
+	{
+		typedef std::tuple<T, Args...> ReturnType;
+
+		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
+		Task<ReturnType>& tref = *t;
+		auto tf = std::function<TaskStatus()>([&tref, f0, fn...] // fixme: no shared_ptr:s can go in here
+		{
+			ReturnType ret;
+			SetTupleValueRecursive<(1+sizeof...(Args))>::invoke(ret, f0->getFuture(), fn->getFuture()...);
+			trySetResult(*tref.getPromise(), std::move(ret));
+			
+			return TsDone;
+		});
+		t->moveFunction(std::move(tf));
+		
+		AddDependencyRecursive<(1+sizeof...(Args))>::invoke(t, f0, fn...);
 
 		return t;
 	}
+	*/
 
 	void threadMain() const
 	{
@@ -299,7 +321,7 @@ private:
             std::shared_ptr<TaskBase> t;
 			if (m_queue.try_pop(t))
 			{
-                assert(t.get() != nullptr && !t->isContinuation());
+                assert(t.get() != nullptr);
                 (*t)();
 			}
 			else
@@ -312,184 +334,42 @@ private:
 		}
 	}
 
-	inline void wakeOne() const
+	inline void wakeThreads(unsigned int n = 1) const
 	{
 		std::unique_lock<std::mutex> lock(m_mutex);		
-		m_cv.notify_one();
+		for (decltype(n) i = 0; i < n; i++)
+			m_cv.notify_one();
 	}
 
-	inline void wakeAll() const
+	inline void wakeAllThreads() const
 	{
 		std::unique_lock<std::mutex> lock(m_mutex);		
 		m_cv.notify_all();
 	}
 
-	template<typename Func, typename T, typename U, typename V, typename X, typename Y>
-	TaskStatus pollDependencyAndCallOrResubmit(Func f, std::shared_ptr<Task<T>>& t, const std::shared_ptr<Task<U>>& d, V argIsVoid, X fIsVoid, Y argIsAssignable) const
+	void schedule(const std::shared_ptr<TaskBase>& t) const
 	{
-		auto arg = d->getFuture();
-
-		// The implementations are encouraged to detect the case when valid == false before the call
-		// and throw a future_error with an error condition of future_errc::no_state. 
-		// http://en.cppreference.com/w/cpp/thread/future/wait_for
-		if (arg.valid())
-		{
-			switch (arg.wait_for(std::chrono::seconds(0)))
-			{
-			case std::future_status::ready:
-				trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
-				return TsDone;
-			case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
-			case std::future_status::timeout:
-#if (_MSC_VER >= 1600)
-				if (arg._Is_ready()) // broken std::future_status::deferred temp workaround
-				{
-					trySetFuncResult(*(t->getPromise()), f, arg, argIsVoid, fIsVoid, argIsAssignable);
-					return TsDone;
-				}
-				else
-#endif
-				{
-					m_queue.push(t);
-					return TsScheduledPolling;
-				}
-			default:
-				assert(false);
-			}
-		}
-		else
-		{
-			throw std::future_error(std::future_errc::no_state);
-		}
+		assert(t.get() != nullptr);
 		
-		return TsInvalid;
+		m_queue.push(t);
+
+		wakeThreads();
 	}
-
-	template<typename T, typename U, typename V, typename... Args>
-	TaskStatus pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>>& t, const std::shared_ptr<Task<U>>& f0, const std::shared_ptr<Task<V>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
+	
+	void schedule(const TaskGroup& tg) const
 	{
-		std::tuple<U, V, Args...> ret;
-		TaskStatus status = JoinAndSetTupleValueRecursive<(2+sizeof...(Args))>::invoke(ret, f0->getFuture(), f1->getFuture(), fn->getFuture()...);
-
-		switch (status)
-		{
-		case TsDone:
-			trySetResult(*(t->getPromise()), std::move(ret));
-			break;
-		case TsScheduledPolling:
-			m_queue.push(t);
-			break;
-		default:
-			assert(false);
-		}
+		assert(tg.size() > 0);
 		
-		return status;
-	}
-
-	template<typename T, typename TaskContainer>
-	TaskStatus pollDependenciesAndJoinOrResubmit(std::shared_ptr<Task<T>>& t, const TaskContainer& c) const
-	{
-		T ret;
-		ret.reserve(c.size());
-
-		TaskStatus status = TsDone;
-
-		for (auto&n : c)
-		{
-			auto fut = n->getFuture();
-
-			// The implementations are encouraged to detect the case when valid == false before the call
-			// and throw a future_error with an error condition of future_errc::no_state. 
-			// http://en.cppreference.com/w/cpp/thread/future/wait_for
-			if (fut.valid())
-			{
-				switch (fut.wait_for(std::chrono::seconds(0)))
-				{
-				case std::future_status::ready:
-					ret.push_back(fut.get());
-					continue;
-				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
-				case std::future_status::timeout:
-#if (_MSC_VER >= 1600)
-					if (fut._Is_ready()) // broken std::future_status::deferred temp workaround
-					{
-						ret.push_back(fut.get());
-						continue;
-					}
-#endif
-					status = TsScheduledPolling;
-					break;
-				default:
-					status = TsInvalid;
-					assert(false);
-				}
-			}
-			else
-			{
-				throw std::future_error(std::future_errc::no_state);
-			}
-
-			if (status != TsDone)
-				break;
-		}
-
-		switch (status)
-		{
-		case TsDone:
-			trySetResult(*(t->getPromise()), std::move(ret));
-			break;
-		case TsScheduledPolling:
-            m_queue.push(t);
-			break;
-		default:
-			assert(false);
-		}
-		
-		return status;
-	}
-
-	void schedule(std::vector<std::shared_ptr<TaskBase>>& queue) const
-	{
-		auto qSize = queue.size();
-		
-		for (auto t : queue)
+		for (auto t : tg)
 		{
 			assert(t.get() != nullptr);
-            m_queue.push(t);
+			m_queue.push(t);
 		}
-
-		if (qSize > 0)
-		{
-			if (qSize >= (m_threads.size() - m_taskConsumerCount))
-			{
-				wakeAll();
-			}
-			else
-			{
-				for (decltype(qSize) i = 0; i < qSize; i++)
-					wakeOne();
-			}
-		}
-	}
-
-	static unsigned int enqueue(const std::shared_ptr<TaskBase>& t, std::vector<std::shared_ptr<TaskBase>>& queue, std::shared_ptr<TimeIntervalCollector> collector = nullptr)
-	{
-		unsigned int count = 0;
 		
-		queue.reserve(queue.size() + t->getDependencies().size() + 1);
-
-		for (auto& d : t->getDependencies())
-			count += enqueue(d, queue, collector);
-
-		t->setTimeIntervalCollector(collector);
-
-		if (!t->isContinuation())
-		{
-			count++;
-			queue.push_back(t);
-		}
-
-		return count;
+		if (tg.size() >= (m_threads.size() - m_taskConsumerCount))
+			wakeAllThreads();
+		else
+			wakeThreads(static_cast<unsigned int>(tg.size()));
 	}
 
 	TaskScheduler(const TaskScheduler&);
@@ -506,71 +386,78 @@ private:
 	// main thread only state
     std::vector<Thread> m_threads;
 };
-
-// todo: tidy up, generalize and move somewhere
+	
 template<unsigned int N>
-struct JoinAndSetTupleValueRecursive
+struct AddDependencyRecursive
 {
 	template <typename T, typename... Args, unsigned int I=0>
-	inline static TaskStatus invoke(T& ret, const Args&... fn)
+	inline static void invoke(const T& t, Args&... fn)
 	{
-		return JoinAndSetValueRecursiveImpl<I, (I >= N)>::invoke(ret, fn...);
+		AddDependencyRecursiveImpl<I, (I >= N)>::invoke(t, fn...);
 	}
-
+	
 private:
-
+	
 	template<unsigned int I, bool Terminate>
-	struct JoinAndSetValueRecursiveImpl;
-
+	struct AddDependencyRecursiveImpl;
+	
 	template<unsigned int I>
-	struct JoinAndSetValueRecursiveImpl<I, false>
+	struct AddDependencyRecursiveImpl<I, false>
 	{
 		template<typename U, typename V, typename... X>
-		static TaskStatus invoke(U& ret, const V& f0, const X&... fn)
+		static void invoke(const U& t, V& f0, X&... fn)
 		{
-			// The implementations are encouraged to detect the case when valid == false before the call
-			// and throw a future_error with an error condition of future_errc::no_state. 
-			// http://en.cppreference.com/w/cpp/thread/future/wait_for
-			if (f0.valid())
-			{
-				switch (f0.wait_for(std::chrono::seconds(0)))
-				{
-				case std::future_status::ready:
-					std::get<I>(ret) = f0.get();
-					return JoinAndSetValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
-				case std::future_status::deferred: // broken in VS2012, returns deferred even when running on another thread (not using std::async which VS assumes)
-				case std::future_status::timeout:
-#if (_MSC_VER >= 1600)
-					if (f0._Is_ready()) // broken std::future_status::deferred temp workaround
-					{
-						std::get<I>(ret) = f0.get();
-						return JoinAndSetValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
-					}
-#endif
-					return TsScheduledPolling;
-				default:
-					assert(false);
-					break;
-				}
-			}
-			else
-			{
-				throw std::future_error(std::future_errc::no_state);
-			}
-
-			return TsInvalid;
+			t->addDependency();
+			f0->addWaiter(t);
+			AddDependencyRecursiveImpl<I+1, (I+1 >= N)>::invoke(t, fn...);
 		}
 	};
-
+	
 	template<unsigned int I>
-	struct JoinAndSetValueRecursiveImpl<I, true>
+	struct AddDependencyRecursiveImpl<I, true>
 	{
 		template<typename U, typename... X>
-		inline static TaskStatus invoke(U&, const X&...)
+		inline static void invoke(const U&, X&...)
 		{
-			return TsDone;
 		}
 	};
 };
+	
+template<unsigned int N>
+struct SetTupleValueRecursive
+{
+	template <typename T, typename... Args, unsigned int I=0>
+	inline static void invoke(T& ret, const Args&... fn)
+	{
+		SetTupleValueRecursiveImpl<I, (I >= N)>::invoke(ret, fn...);
+	}
+	
+private:
+	
+	template<unsigned int I, bool Terminate>
+	struct SetTupleValueRecursiveImpl;
+	
+	template<unsigned int I>
+	struct SetTupleValueRecursiveImpl<I, false>
+	{
+		template<typename U, typename V, typename... X>
+		static void invoke(U& ret, const V& f0, const X&... fn)
+		{
+			std::get<I>(ret) = f0.get();
+			SetTupleValueRecursiveImpl<I+1, (I+1 >= N)>::invoke(ret, fn...);
+		}
+	};
+	
+	template<unsigned int I>
+	struct SetTupleValueRecursiveImpl<I, true>
+	{
+		template<typename U, typename... X>
+		inline static void invoke(U&, const X&...)
+		{
+		}
+	};
+};
+
+
 
 } // namespace conc11

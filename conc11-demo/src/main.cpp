@@ -17,6 +17,13 @@
 #include <thread>
 #include <vector>
 
+namespace conc11
+{
+
+std::shared_ptr<TimeIntervalCollector> g_timeIntervalCollector;
+	
+}
+
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
 {
 	double MinRe = -2.0;
@@ -88,13 +95,10 @@ private:
 	
     std::shared_ptr<conc11::TaskBase> m_createWork;
 	std::shared_ptr<conc11::TaskBase> m_work;
-	std::shared_ptr<conc11::TaskBase> m_clear;
-	std::shared_ptr<conc11::TaskBase> m_updateFps;
-	std::shared_ptr<conc11::TaskBase> m_drawIntervals;
+	std::shared_ptr<conc11::TaskBase> m_render;
 	std::shared_ptr<conc11::TaskBase> m_swap;
 	
 	std::shared_ptr<conc11::TimeIntervalCollector> m_collectors[2];
-	std::shared_ptr<conc11::TimeIntervalCollector> m_collector;
 	std::shared_ptr<conc11::TimeIntervalCollector> m_lastFrameCollector;
 	
 	std::chrono::high_resolution_clock::time_point m_frameStart;
@@ -124,45 +128,37 @@ MainWindow::MainWindow()
 	for (unsigned int i = 0; i < imageCnt; i++)
 		m_images.push_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 	
-	m_collectors[0] = std::make_shared<conc11::TimeIntervalCollector>();
+	conc11::g_timeIntervalCollector = m_collectors[0] = std::make_shared<conc11::TimeIntervalCollector>();
 	m_collectors[1] = std::make_shared<conc11::TimeIntervalCollector>();
-	m_collector = m_collectors[0];
 	
 	m_frameStart = std::chrono::high_resolution_clock::now();
 	
-	m_clear = m_scheduler.createTask([this]
+	auto clear = m_scheduler.createTask([this]
 	{
 		glClearColor(0, 0, 0.3f, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
         m_painter.begin(m_device);
 	}, "clear", pink);
 	
-	m_updateFps = m_scheduler.createTask([this]
+	// todo: enablers
+	m_render = clear;
+	
+	auto drawFps = m_scheduler.createTask([this]
 	{
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
 
         m_painter.setWindow(0, 0, width(), height());
 
-        //m_painter.paintEngine()->setSystemClip(QRegion(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio()));
-        //m_painter.paintEngine()->setSystemRect(QRect(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio()));
-
-        m_painter.setPen(Qt::blue);
-        m_painter.drawRect(0, 0, width(), height());
-        m_painter.setPen(Qt::red);
+        //m_painter.setPen(Qt::blue);
+        //m_painter.drawRect(0, 0, width(), height());
+        m_painter.setPen(Qt::white);
         m_painter.setFont(QFont("Arial", 30));
         m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
-
-        /*
-        QRectF rect = QRectF(0, 0, width(), height());
-		painter.setPen(Qt::darkRed);
-		painter.drawRect(rect);
-		painter.setPen(Qt::white);
-		painter.drawText(rect, QString(std::to_string(fps).c_str()), QTextOption(Qt::AlignLeft|Qt::AlignTop));
-        */
-	}, "updateFps", cyan);
+		
+	}, clear, "drawFps", cyan);
 	
-	m_drawIntervals = m_scheduler.createTask([this]
+	auto render = m_scheduler.createTask([this]
 	{
 		std::vector<float>& vertices = m_vertexBuffer;
 		std::vector<float>& colors = m_colorBuffer;
@@ -294,16 +290,16 @@ MainWindow::MainWindow()
 
         m_painter.endNativePainting();
 
-  }, "drawIntervals", blue);
-
+	}, drawFps, "drawIntervals", blue);
 	
 	m_createWork = m_scheduler.createTask([this, imageSize, imageCnt]
     {
-        std::shared_ptr<conc11::Task<unsigned int>> branches[2];
-
+        conc11::TaskGroup branches;
+		conc11::TaskGroup allTasks;
+		
         for (unsigned int j = 0; j < 2; j++)
         {
-            std::vector<std::shared_ptr<conc11::Task<unsigned int>>> tasks;
+            conc11::TaskGroup tasks;
             tasks.reserve(imageCnt);
             for (unsigned int i = 0; i < imageCnt; i++)
             {
@@ -317,17 +313,17 @@ MainWindow::MainWindow()
                 }, std::string("mandel") + std::to_string(i), color));
             }
 		
-            branches[j] = m_scheduler.join(tasks)->then([&](std::vector<unsigned int> vals) // wtf do we need capture by ref on vc 2012 ctp here!?
+            branches.push_back(m_scheduler.join(tasks)->then([]/*(std::vector<unsigned int> vals)*/
             {
-                return std::accumulate(begin(vals), end(vals), 0U);
-            }, std::string("accumulate") + std::to_string(j), magenta);
+                /*return std::accumulate(begin(vals), end(vals), 0U);*/
+            }, std::string("noop") + std::to_string(j), magenta));
+			
+			allTasks.insert(allTasks.end(), tasks.begin(), tasks.end());
         }
-
-        auto work = m_scheduler.join(branches[0], branches[1]);
 		
-        m_scheduler.dispatch(work, m_collector);
+        m_work = m_scheduler.join(branches);
 		
-        m_work = work;
+		m_scheduler.dispatch(allTasks);
 		
 	}, "createWork", rose);
 	
@@ -377,19 +373,17 @@ void MainWindow::render()
 {
     m_frameIndex++;
     m_lastFrameStart = m_frameStart;
-    m_lastFrameCollector = m_collector;
+    m_lastFrameCollector = conc11::g_timeIntervalCollector;
 
     m_frameStart = std::chrono::high_resolution_clock::now();
 
-    m_collector = m_collectors[m_frameIndex % 2];
-    m_collector->clear();
+    conc11::g_timeIntervalCollector = m_collectors[m_frameIndex % 2];
+    conc11::g_timeIntervalCollector->clear();
 
-    m_scheduler.dispatch(m_createWork, m_collector);
-	m_scheduler.run(m_clear, m_collector);
-	m_scheduler.run(m_drawIntervals, m_collector);
-	m_scheduler.run(m_updateFps, m_collector);
-    m_scheduler.waitJoin(m_work);
-    m_scheduler.run(m_swap, m_collector);
+    m_scheduler.dispatch(m_createWork);
+	m_scheduler.run(m_render);
+	m_scheduler.waitJoin(m_work);
+	m_scheduler.run(m_swap);
 }
 
 int main(int argc, char **argv)
