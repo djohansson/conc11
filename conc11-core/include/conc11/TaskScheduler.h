@@ -29,7 +29,15 @@ template<unsigned int N>
 struct SetTupleValueRecursive;
 
 class TaskScheduler
-{	
+{
+	enum TaskPriority
+	{
+		TpNormal = 0,
+		TpHigh,
+		
+		TpCount
+	};
+	
 public:
 
 	TaskScheduler(unsigned int threadCount = std::max(2U, std::thread::hardware_concurrency()) - 1)
@@ -82,13 +90,14 @@ public:
 			});
 			t->moveFunction(std::move(tf));
 			
-            m_queue.push(t);
+            m_queues[TpNormal].push(t);
 			wakeThreads();
 		}
 
         m_threads.clear(); // = join
 
-		assert(m_queue.empty());
+		for (auto& q : m_queues)
+			assert(q.empty());
 	}
 
     inline const std::vector<Thread>& getThreads() const
@@ -148,7 +157,7 @@ public:
 	inline void run(const std::shared_ptr<TaskBase>& t) const
 	{		
 		assert(t.get() != nullptr);
-		(*t)();
+		(*t)(*this);
 	}
 	
 	template<typename T>
@@ -182,10 +191,10 @@ public:
 		do
         {
             std::shared_ptr<TaskBase> qt;
-			while (m_queue.try_pop(qt))
+			while (m_queues[TpNormal].try_pop(qt))
 			{
                 assert(qt.get() != nullptr);
-                (*qt)();
+                (*qt)(*this);
 
                 if (t.get() != nullptr && t->getStatus() == TsDone)
 					return;
@@ -319,10 +328,10 @@ private:
 		{
 			// process main queue or sleep
             std::shared_ptr<TaskBase> t;
-			if (m_queue.try_pop(t))
+			if (m_queues[TpNormal].try_pop(t))
 			{
                 assert(t.get() != nullptr);
-                (*t)();
+                (*t)(*this);
 			}
 			else
 			{
@@ -336,6 +345,8 @@ private:
 
 	inline void wakeThreads(unsigned int n = 1) const
 	{
+		assert(n > 0);
+		
 		std::unique_lock<std::mutex> lock(m_mutex);		
 		for (decltype(n) i = 0; i < n; i++)
 			m_cv.notify_one();
@@ -351,7 +362,7 @@ private:
 	{
 		assert(t.get() != nullptr);
 		
-		m_queue.push(t);
+		m_queues[TpNormal].push(t);
 
 		wakeThreads();
 	}
@@ -363,7 +374,7 @@ private:
 		for (auto t : tg)
 		{
 			assert(t.get() != nullptr);
-			m_queue.push(t);
+			m_queues[TpNormal].push(t);
 		}
 		
 		if (tg.size() >= (m_threads.size() - m_taskConsumerCount))
@@ -378,7 +389,7 @@ private:
 	// concurrent state
 	mutable std::mutex m_mutex;
 	mutable std::condition_variable m_cv;
-    mutable ConcurrentQueueType<std::shared_ptr<TaskBase>> m_queue;
+    mutable ConcurrentQueueType<std::shared_ptr<TaskBase>> m_queues[TpCount];
 	mutable std::atomic<uint32_t> m_taskConsumerCount;
 	mutable std::atomic<bool> m_running;
 	mutable std::atomic<bool> m_schedulerTaskEnabled;
@@ -458,6 +469,36 @@ private:
 	};
 };
 
-
+template <typename T>
+void Task<T>::operator()(const TaskScheduler& scheduler)
+{
+	assert(m_function);
+	
+	{
+		ScopedTimeInterval scope(m_name, m_debugColor);
+		
+		if (getStatus() == TsDone)
+		{
+			reset();
+			
+			for (auto t : m_waiters)
+				t->addDependency();
+		}
+		
+		setStatus(m_function());
+	}
+	
+	assert(getStatus() == TsDone);
+	
+	if (m_waiters.size() > 0)
+	{
+		if (m_waiters[0]->releaseDependency())
+			scheduler.run(m_waiters[0]);
+		
+		for (unsigned int i = 1; i < m_waiters.size(); i++)
+			if (m_waiters[i]->releaseDependency())
+				scheduler.dispatch(m_waiters[i]);
+	}
+}
 
 } // namespace conc11

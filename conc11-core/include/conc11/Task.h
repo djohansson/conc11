@@ -17,6 +17,8 @@
 
 namespace conc11
 {
+	
+class TaskScheduler;
 
 enum TaskStatus
 {
@@ -27,7 +29,7 @@ enum TaskStatus
 
 struct TaskBase /*abstract*/
 {
-	virtual void operator()() = 0;
+	virtual void operator()(const TaskScheduler& scheduler) = 0;
 	virtual TaskStatus getStatus() const = 0;
 	virtual void addDependency() const = 0;
 	virtual bool releaseDependency() const = 0;
@@ -64,40 +66,8 @@ public:
 		reset();
 	}
 	
-	~Task()
-	{
-		m_waiters.clear();
-	}
-
-	virtual void operator()() final
-	{
-		assert(m_function);
-		
-		{
-			ScopedTimeInterval scope(m_name, m_debugColor);
-		
-			if (getStatus() == TsDone)
-			{
-				reset();
-				
-				for (auto t : m_waiters)
-				{
-					t->addDependency();
-				}
-			}
-
-			setStatus(m_function());
-		}
-		
-		assert(getStatus() == TsDone);
+	virtual void operator()(const TaskScheduler& scheduler) final;
 	
-		for (auto t : m_waiters)
-		{
-			if (t->releaseDependency())
-				(*t)();
-		}
-	}
-
 	virtual TaskStatus getStatus() const final
 	{
 		return m_status.load(std::memory_order_acquire);
