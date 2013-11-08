@@ -22,24 +22,16 @@
 namespace conc11
 {
 	
-template<unsigned int N>
+template <unsigned int N>
 struct AddDependencyRecursive;
 	
-template<unsigned int N>
+template <unsigned int N>
 struct SetTupleValueRecursive;
 
 class TaskScheduler
 {
-	enum TaskPriority
-	{
-		TpNormal = 0,
-		TpHigh,
-		
-		TpCount
-	};
-	
 public:
-
+	
 	TaskScheduler(unsigned int threadCount = std::max(2U, std::thread::hardware_concurrency()) - 1)
 		: m_taskConsumerCount(threadCount)
 		, m_running(true)
@@ -74,11 +66,26 @@ public:
 
 	~TaskScheduler()
 	{
-		waitJoin();
+		// empty queues
+		std::shared_ptr<TaskBase> qt;
+		do
+        {
+			for (auto& q : m_queues)
+			{
+				while (q.try_pop(qt))
+				{
+					assert(qt.get() != nullptr);
+					(*qt)(*this);
+				}
+			}
+			
+			std::this_thread::yield();
+			
+		} while (m_taskConsumerCount > 0);
 
 		// signal threads to exit
 		{
-			auto t = std::make_shared<Task<UnitType>>("killThreads");
+			auto t = std::make_shared<Task<UnitType>>(TpNormal, "killThreads");
 			Task<UnitType>& tref = *t;
 			auto tf = std::function<TaskStatus()>([this, &tref]
 			{
@@ -94,7 +101,8 @@ public:
 			wakeThreads();
 		}
 
-        m_threads.clear(); // = join
+		// join threads
+        m_threads.clear();
 
 		for (auto& q : m_queues)
 			assert(q.empty());
@@ -106,7 +114,7 @@ public:
 	}
 
 	// ReturnType Func(...) w/o dependency
-	template<typename Func>
+	template <typename Func>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::string& name = "", const float* color = nullptr) const
 	{
 		return createTaskWithoutDependency(
@@ -118,7 +126,7 @@ public:
 	}
 
 	// ReturnType Func(void) with dependencies
-	template<typename Func, typename T>
+	template <typename Func, typename T>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTask(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name = "", const float* color = nullptr) const
 	{
 		return createTaskWithDependency(
@@ -131,27 +139,27 @@ public:
 			std::is_assignable<T, typename FunctionTraits<Func>::template Arg<0>::Type>());
 	}
 	
-	// join heterogeneous tasks without passing any return values
-	std::shared_ptr<Task<UnitType>> join(const TaskGroup& g) const
+	// join heterogeneous tasks
+	std::shared_ptr<Task<UnitType>> join(const std::vector<std::shared_ptr<TaskBase>>& g) const
 	{
 		return joinTasks(g);
 	}
 	
-	/*
 	// join homogeneous tasks with passed returned values
-	template<typename TaskContainer>
-	std::shared_ptr<Task<std::vector<typename TaskContainer::value_type::element_type::ReturnType>>> join(const TaskContainer& c) const
+	template <typename T>
+	std::shared_ptr<Task<std::vector<T>>> join(const TaskGroup<T>& g) const
 	{
-		return joinTasks(c);
+		return joinTasks(g);
 	}
 
+	/*
 	// join heterogeneous tasks with passed returned values
 	template<typename T, typename U, typename... Args>
 	std::shared_ptr<Task<std::tuple<T, U, Args...>>> join(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<U>>& f1, const std::shared_ptr<Task<Args>>&... fn) const
 	{
 		return joinTasks(f0, f1, fn...);
 	}
-	*/
+	 */
 	
 	// run task chain
 	inline void run(const std::shared_ptr<TaskBase>& t) const
@@ -160,7 +168,7 @@ public:
 		(*t)(*this);
 	}
 	
-	template<typename T>
+	template <typename T>
 	inline void run(const std::shared_ptr<Task<T>>& t) const
 	{
 		auto tb = std::static_pointer_cast<TaskBase>(t);
@@ -173,47 +181,63 @@ public:
 		schedule(t);
 	}
 	
-	inline void dispatch(const TaskGroup& tg) const
+	inline void dispatch(const std::vector<std::shared_ptr<TaskBase>>& g) const
 	{
-		schedule(tg);
+		schedule(g);
 	}
 	
-	template<typename T>
+	template <typename T>
+	inline void dispatch(const TaskGroup<T>& g) const
+	{
+		std::vector<std::shared_ptr<TaskBase>> g_base;
+		g_base.reserve(g.size());
+		
+		for (auto t : g)
+			g_base.push_back(std::static_pointer_cast<TaskBase>(t));
+
+		dispatch(g_base);
+	}
+	
+	template <typename T>
 	inline void dispatch(const std::shared_ptr<Task<T>>& t) const
 	{
 		auto tb = std::static_pointer_cast<TaskBase>(t);
 		dispatch(tb);
 	}
 
-	// join in on task queue, emptying the entire queue or returning once task t has finished
-	void waitJoin(const std::shared_ptr<TaskBase>& t = std::shared_ptr<Task<void>>()) const
+	// join in on task queue, returning once task t has finished
+	void waitJoin(const std::shared_ptr<TaskBase>& t) const
     {
-		do
+		std::shared_ptr<TaskBase> qt;
+		while (true)
         {
-            std::shared_ptr<TaskBase> qt;
-			while (m_queues[TpNormal].try_pop(qt))
+			for (auto& q : m_queues)
 			{
-                assert(qt.get() != nullptr);
-                (*qt)(*this);
-
-                if (t.get() != nullptr && t->getStatus() == TsDone)
+				while (q.try_pop(qt))
+				{
+					assert(qt.get() != nullptr);
+					(*qt)(*this);
+					
+					if (t.get() != nullptr && t->getStatus() == TsDone)
+						return;
+				}
+				
+				if (t.get() != nullptr && t->getStatus() == TsDone)
 					return;
 			}
-
-            if (t.get() != nullptr && t->getStatus() == TsDone)
-                return;
 			
-		} while (m_taskConsumerCount > 0);
+			std::this_thread::yield();
+		}
 	}
 
 private:
 
-	template<typename Func, typename T, typename U>
+	template <typename Func, typename T, typename U>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithoutDependency(Func f, const std::string& name, const float* color, T argIsVoid, U fIsVoid) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-		auto t = std::make_shared<Task<ReturnType>>(name, color);
+		auto t = std::make_shared<Task<ReturnType>>(TpNormal, name, color);
 		Task<ReturnType>& tref = *t;
 		auto tf = std::function<TaskStatus()>([&tref, f, argIsVoid, fIsVoid]
 		{
@@ -226,12 +250,12 @@ private:
 		return t;
 	}
 
-	template<typename Func, typename T, typename U, typename V, typename X>
+	template <typename Func, typename T, typename U, typename V, typename X>
 	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, const std::string& name, const float* color, U argIsVoid, V fIsVoid, X argIsAssignable) const
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-		auto t = std::make_shared<Task<ReturnType>>(name, color);
+		auto t = std::make_shared<Task<ReturnType>>(TpNormal, name, color);
 		Task<ReturnType>& tref = *t;
 		auto tf = std::function<TaskStatus()>([&tref, f, dependency, argIsVoid, fIsVoid, argIsAssignable]
 		{
@@ -247,9 +271,9 @@ private:
 		return t;
 	}
 	
-	std::shared_ptr<Task<UnitType>> joinTasks(const TaskGroup& g) const
+	std::shared_ptr<Task<UnitType>> joinTasks(const std::vector<std::shared_ptr<TaskBase>>& g) const
 	{
-		auto t = std::make_shared<Task<UnitType>>("joinTasks");
+		auto t = std::make_shared<Task<UnitType>>(TpHigh, "joinTasks");
 		Task<UnitType>& tref = *t;
 		auto tf = std::function<TaskStatus()>([&tref]
 		{
@@ -268,21 +292,25 @@ private:
 		return t;
 	}
 	
-	/*
-	template<typename TaskContainer>
-	std::shared_ptr<Task<std::vector<typename TaskContainer::value_type::element_type::ReturnType>>> joinTasks(const TaskContainer& c) const
+	template <typename T>
+	std::shared_ptr<Task<std::vector<T>>> joinTasks(const TaskGroup<T>& g) const
 	{
-		typedef std::vector<typename TaskContainer::value_type::element_type::ReturnType> ReturnType;
+		typedef std::vector<T> ReturnType;
+		typedef std::vector<std::shared_future<T>> FutureContainer;
 		
-		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
+		FutureContainer fc;
+		for (auto i : g)
+			fc.push_back(i->getFuture());
+		
+		auto t = std::make_shared<Task<ReturnType>>(TpHigh, "joinTasks");
 		Task<ReturnType>& tref = *t;
-		auto tf = std::function<TaskStatus()>([&tref, c] // fixme: no shared_ptr:s can go in here
+		auto tf = std::function<TaskStatus()>([&tref, fc]
 		{
 			ReturnType ret;
-			ret.reserve(c.size());
+			ret.reserve(fc.size());
 			
-			for (auto n : c)
-				ret.push_back(n->getFuture().get());
+			for (auto f : fc)
+				ret.push_back(f.get());
 			
 			trySetResult(*tref.getPromise(), std::move(ret));
 			
@@ -290,26 +318,31 @@ private:
 		});
 		t->moveFunction(std::move(tf));
 		
-		for (auto f : c)
+		for (auto i : g)
 		{
 			t->addDependency();
-			f->addWaiter(t);
+			i->addWaiter(t);
 		}
 		
 		return t;
 	}
 
+	/*
 	template<typename T, typename... Args>
 	std::shared_ptr<Task<std::tuple<T, Args...>>> joinTasks(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn) const
 	{
 		typedef std::tuple<T, Args...> ReturnType;
+		typedef std::tuple<std::shared_future<T>, std::shared_future<Args>...> FutureContainer;
+		
+		FutureContainer fc;
+		SetFutureContainer<(1+sizeof...(Args))>::invoke(t, f0, fn...);
 
 		auto t = std::make_shared<Task<ReturnType>>("joinTasks");
 		Task<ReturnType>& tref = *t;
-		auto tf = std::function<TaskStatus()>([&tref, f0, fn...] // fixme: no shared_ptr:s can go in here
+		auto tf = std::function<TaskStatus()>([&tref, fc]
 		{
 			ReturnType ret;
-			SetTupleValueRecursive<(1+sizeof...(Args))>::invoke(ret, f0->getFuture(), fn->getFuture()...);
+			SetTupleValueRecursive<(1+sizeof...(Args))>::invoke(ret, fc);
 			trySetResult(*tref.getPromise(), std::move(ret));
 			
 			return TsDone;
@@ -320,7 +353,7 @@ private:
 
 		return t;
 	}
-	*/
+	 */
 
 	void threadMain() const
 	{
@@ -328,7 +361,12 @@ private:
 		{
 			// process main queue or sleep
             std::shared_ptr<TaskBase> t;
-			if (m_queues[TpNormal].try_pop(t))
+			if (m_queues[TpHigh].try_pop(t))
+			{
+                assert(t.get() != nullptr);
+                (*t)(*this);
+			}
+			else if (m_queues[TpNormal].try_pop(t))
 			{
                 assert(t.get() != nullptr);
                 (*t)(*this);
@@ -362,25 +400,25 @@ private:
 	{
 		assert(t.get() != nullptr);
 		
-		m_queues[TpNormal].push(t);
+		m_queues[t->getPriority()].push(t);
 
 		wakeThreads();
 	}
 	
-	void schedule(const TaskGroup& tg) const
+	void schedule(const std::vector<std::shared_ptr<TaskBase>>& g) const
 	{
-		assert(tg.size() > 0);
+		assert(g.size() > 0);
 		
-		for (auto t : tg)
+		for (auto t : g)
 		{
 			assert(t.get() != nullptr);
-			m_queues[TpNormal].push(t);
+			m_queues[t->getPriority()].push(t);
 		}
 		
-		if (tg.size() >= (m_threads.size() - m_taskConsumerCount))
+		if (g.size() >= (m_threads.size() - m_taskConsumerCount))
 			wakeAllThreads();
 		else
-			wakeThreads(static_cast<unsigned int>(tg.size()));
+			wakeThreads(static_cast<unsigned int>(g.size()));
 	}
 
 	TaskScheduler(const TaskScheduler&);
@@ -398,7 +436,7 @@ private:
     std::vector<Thread> m_threads;
 };
 	
-template<unsigned int N>
+template <unsigned int N>
 struct AddDependencyRecursive
 {
 	template <typename T, typename... Args, unsigned int I=0>
@@ -409,13 +447,13 @@ struct AddDependencyRecursive
 	
 private:
 	
-	template<unsigned int I, bool Terminate>
+	template <unsigned int I, bool Terminate>
 	struct AddDependencyRecursiveImpl;
 	
-	template<unsigned int I>
+	template <unsigned int I>
 	struct AddDependencyRecursiveImpl<I, false>
 	{
-		template<typename U, typename V, typename... X>
+		template <typename U, typename V, typename... X>
 		static void invoke(const U& t, V& f0, X&... fn)
 		{
 			t->addDependency();
@@ -424,7 +462,7 @@ private:
 		}
 	};
 	
-	template<unsigned int I>
+	template <unsigned int I>
 	struct AddDependencyRecursiveImpl<I, true>
 	{
 		template<typename U, typename... X>
@@ -434,7 +472,7 @@ private:
 	};
 };
 	
-template<unsigned int N>
+template <unsigned int N>
 struct SetTupleValueRecursive
 {
 	template <typename T, typename... Args, unsigned int I=0>
@@ -445,13 +483,13 @@ struct SetTupleValueRecursive
 	
 private:
 	
-	template<unsigned int I, bool Terminate>
+	template <unsigned int I, bool Terminate>
 	struct SetTupleValueRecursiveImpl;
 	
-	template<unsigned int I>
+	template <unsigned int I>
 	struct SetTupleValueRecursiveImpl<I, false>
 	{
-		template<typename U, typename V, typename... X>
+		template <typename U, typename V, typename... X>
 		static void invoke(U& ret, const V& f0, const X&... fn)
 		{
 			std::get<I>(ret) = f0.get();
@@ -459,7 +497,7 @@ private:
 		}
 	};
 	
-	template<unsigned int I>
+	template <unsigned int I>
 	struct SetTupleValueRecursiveImpl<I, true>
 	{
 		template<typename U, typename... X>

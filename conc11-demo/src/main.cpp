@@ -93,6 +93,7 @@ private:
 	std::vector<std::thread::id> m_threadIds;
 	std::vector<std::unique_ptr<unsigned>> m_images;
 	
+	std::shared_ptr<conc11::TaskBase> m_renderDataPrepare;
     std::shared_ptr<conc11::TaskBase> m_createWork;
 	std::shared_ptr<conc11::TaskBase> m_work;
 	std::shared_ptr<conc11::TaskBase> m_render;
@@ -133,32 +134,7 @@ MainWindow::MainWindow()
 	
 	m_frameStart = std::chrono::high_resolution_clock::now();
 	
-	auto clear = m_scheduler.createTask([this]
-	{
-		glClearColor(0, 0, 0.3f, 0);
-		glClear(GL_COLOR_BUFFER_BIT);
-        m_painter.begin(m_device);
-	}, "clear", pink);
-	
-	// todo: enablers
-	m_render = clear;
-	
-	auto drawFps = m_scheduler.createTask([this]
-	{
-		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
-		auto fps = 1e9 / double(dt);
-
-        m_painter.setWindow(0, 0, width(), height());
-
-        //m_painter.setPen(Qt::blue);
-        //m_painter.drawRect(0, 0, width(), height());
-        m_painter.setPen(Qt::white);
-        m_painter.setFont(QFont("Arial", 30));
-        m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
-		
-	}, clear, "drawFps", cyan);
-	
-	auto render = m_scheduler.createTask([this]
+	m_renderDataPrepare = m_scheduler.createTask([this]
 	{
 		std::vector<float>& vertices = m_vertexBuffer;
 		std::vector<float>& colors = m_colorBuffer;
@@ -214,7 +190,7 @@ MainWindow::MainWindow()
 			for (auto it = ip.first; it != ip.second; it++)
 			{
 				auto& ti = (*it).second;
-								
+				
 				auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
 				auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
 				
@@ -262,7 +238,37 @@ MainWindow::MainWindow()
 			
 			threadIndex++;
         }
+	}, "renderDataPrepare", gray);
+	
+	auto clear = m_scheduler.createTask([this]
+	{
+		glClearColor(0, 0, 0.3f, 0);
+		glClear(GL_COLOR_BUFFER_BIT);
+        m_painter.begin(m_device);
+	}, "clear", pink);
+	
+	// todo: enablers
+	m_render = clear;
+	
+	auto drawFps = m_scheduler.createTask([this]
+	{
+		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
+		auto fps = 1e9 / double(dt);
 
+        m_painter.setWindow(0, 0, width(), height());
+
+        //m_painter.setPen(Qt::blue);
+        //m_painter.drawRect(0, 0, width(), height());
+        m_painter.setPen(Qt::white);
+        m_painter.setFont(QFont("Arial", 30));
+        m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
+		
+	}, clear, "drawFps", cyan);
+	
+	auto render = m_scheduler.createTask([this]
+	{
+		m_scheduler.waitJoin(m_renderDataPrepare);
+		
         m_painter.beginNativePainting();
 
 		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
@@ -275,13 +281,13 @@ MainWindow::MainWindow()
     //	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
-		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, vertices.data());
-		glVertexAttribPointer(m_colAttr, 3, GL_FLOAT, GL_FALSE, 0, colors.data());
+		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, m_vertexBuffer.data());
+		glVertexAttribPointer(m_colAttr, 3, GL_FLOAT, GL_FALSE, 0, m_colorBuffer.data());
 		
 		glEnableVertexAttribArray(0);
 		glEnableVertexAttribArray(1);
 		
-		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size() / 2);
+		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_vertexBuffer.size() / 2);
 		
 		glDisableVertexAttribArray(1);
 		glDisableVertexAttribArray(0);
@@ -294,12 +300,12 @@ MainWindow::MainWindow()
 	
 	m_createWork = m_scheduler.createTask([this, imageSize, imageCnt]
     {
-        conc11::TaskGroup branches;
-		conc11::TaskGroup allTasks;
+		std::vector<std::shared_ptr<conc11::TaskBase>> branches;
+		conc11::TaskGroup<unsigned int> allTasks;
 		
         for (unsigned int j = 0; j < 2; j++)
         {
-            conc11::TaskGroup tasks;
+            conc11::TaskGroup<unsigned int> tasks;
             tasks.reserve(imageCnt);
             for (unsigned int i = 0; i < imageCnt; i++)
             {
@@ -309,14 +315,14 @@ MainWindow::MainWindow()
                 tasks.push_back(m_scheduler.createTask([this, i, imageSize]
                 {
                     mandel(0, imageSize, imageSize, 0, imageSize, imageSize, m_images[i].get());
-                    return i;
+                    return (unsigned int)i;
                 }, std::string("mandel") + std::to_string(i), color));
             }
 		
-            branches.push_back(m_scheduler.join(tasks)->then([]/*(std::vector<unsigned int> vals)*/
+            branches.push_back(m_scheduler.join(tasks)->then([](std::vector<unsigned int> vals)
             {
-                /*return std::accumulate(begin(vals), end(vals), 0U);*/
-            }, std::string("noop") + std::to_string(j), magenta));
+                return std::accumulate(begin(vals), end(vals), 0U);
+            }, std::string("accumulate") + std::to_string(j), magenta));
 			
 			allTasks.insert(allTasks.end(), tasks.begin(), tasks.end());
         }
@@ -380,6 +386,7 @@ void MainWindow::render()
     conc11::g_timeIntervalCollector = m_collectors[m_frameIndex % 2];
     conc11::g_timeIntervalCollector->clear();
 
+	m_scheduler.dispatch(m_renderDataPrepare);
     m_scheduler.dispatch(m_createWork);
 	m_scheduler.run(m_render);
 	m_scheduler.waitJoin(m_work);

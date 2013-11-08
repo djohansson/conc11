@@ -24,19 +24,30 @@ enum TaskStatus
 {
 	TsPending,
 	TsDone,
-	TsInvalid
+	TsInvalid,
+	
+	TsCount
+};
+	
+enum TaskPriority
+{
+	TpNormal = 0,
+	TpHigh,
+	
+	TpCount
 };
 
 struct TaskBase /*abstract*/
 {
 	virtual void operator()(const TaskScheduler& scheduler) = 0;
 	virtual TaskStatus getStatus() const = 0;
+	virtual TaskPriority getPriority() const = 0;
+	
+	// todo: hide these
 	virtual void addDependency() const = 0;
 	virtual bool releaseDependency() const = 0;
 	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) = 0;
 };
-	
-typedef std::vector<std::shared_ptr<TaskBase>> TaskGroup;
 
 template<typename T>
 class Task : public TaskBase
@@ -45,9 +56,10 @@ public:
 
 	typedef T ReturnType;
 
-	Task(const std::string& name = "", const float* color = nullptr)
+	Task(TaskPriority priority = TpNormal, const std::string& name = "", const float* color = nullptr)
 		: m_name(name)
 		, m_status(TsInvalid)
+		, m_priority(priority)
 		, m_waitCount(0)
 	{
 		if (color)
@@ -70,7 +82,12 @@ public:
 	
 	virtual TaskStatus getStatus() const final
 	{
-		return m_status.load(std::memory_order_acquire);
+		return m_status;
+	}
+	
+	virtual TaskPriority getPriority() const final
+	{
+		return m_priority;
 	}
 
 	virtual void addDependency() const final
@@ -130,7 +147,7 @@ public:
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
-		auto t = std::make_shared<Task<ThenReturnType>>(name, color);
+		auto t = std::make_shared<Task<ThenReturnType>>(TpHigh, name, color);
 		Task<ThenReturnType>& tref = *t;
 		auto tf = std::function<TaskStatus()>([this, &tref, f]
 		{
@@ -154,9 +171,14 @@ private:
 	Task(const Task&);
 	Task& operator=(const Task&);
 	
-	inline void setStatus(TaskStatus status) const
+	inline void setStatus(TaskStatus status)
 	{
-		m_status.store(status, std::memory_order_release);
+		m_status = status;
+	}
+	
+	inline void setPriority(TaskPriority priority)
+	{
+		m_priority = priority;
 	}
 	
 	inline void reset()
@@ -181,8 +203,15 @@ private:
 	std::vector<std::shared_ptr<TaskBase>> m_waiters;
 	std::string m_name;
 	float m_debugColor[3];
-	mutable std::atomic<TaskStatus> m_status;
+	TaskStatus m_status;
+	TaskPriority m_priority;
 	mutable std::atomic<uint32_t> m_waitCount;
 };
+
+template <typename T>
+class TaskGroup : public std::vector<std::shared_ptr<Task<T>>> { };
+	
+template <>
+class TaskGroup<void>;
 
 } // namespace conc11
