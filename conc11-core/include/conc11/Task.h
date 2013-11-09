@@ -1,7 +1,6 @@
 #pragma once
 
 #include "FunctionTraits.h"
-#include "TaskUtils.h"
 #include "TimeIntervalCollector.h"
 #include "TaskTypes.h"
 
@@ -42,6 +41,7 @@ struct TaskBase /*abstract*/
 	virtual void operator()(const TaskScheduler& scheduler) = 0;
 	virtual TaskStatus getStatus() const = 0;
 	virtual TaskPriority getPriority() const = 0;
+	virtual void wait() const = 0;
 	
 	// todo: hide these
 	virtual void addDependency() const = 0;
@@ -88,6 +88,12 @@ public:
 	virtual TaskPriority getPriority() const final
 	{
 		return m_priority;
+	}
+	
+	virtual void wait() const final
+	{
+		assert(m_status != TsInvalid);
+		m_future.wait();
 	}
 
 	virtual void addDependency() const final
@@ -209,9 +215,9 @@ private:
 };
 
 template <typename T>
-class TaskGroup : public std::vector<std::shared_ptr<Task<T>>> { };
+class TypedTaskGroup : public std::vector<std::shared_ptr<Task<T>>> { };
 	
-template <>
-class TaskGroup<void>;
+class TaskGroup : public std::vector<std::shared_ptr<TaskBase>> { };
+
 
 } // namespace conc11

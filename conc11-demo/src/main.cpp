@@ -9,6 +9,7 @@
 
 #include <conc11/Task.h>
 #include <conc11/TaskScheduler.h>
+#include <conc11/TaskUtils.h>
 #include <conc11/TimeIntervalCollector.h>
 
 #include <chrono>
@@ -16,6 +17,8 @@
 #include <numeric>
 #include <thread>
 #include <vector>
+
+using namespace conc11;
 
 namespace conc11
 {
@@ -89,18 +92,18 @@ private:
     GLuint m_colAttr;
 	GLuint m_matrixUniform;
 	
-	conc11::TaskScheduler m_scheduler;
+	TaskScheduler m_scheduler;
 	std::vector<std::thread::id> m_threadIds;
 	std::vector<std::unique_ptr<unsigned>> m_images;
 	
-	std::shared_ptr<conc11::TaskBase> m_renderDataPrepare;
-    std::shared_ptr<conc11::TaskBase> m_createWork;
-	std::shared_ptr<conc11::TaskBase> m_work;
-	std::shared_ptr<conc11::TaskBase> m_render;
-	std::shared_ptr<conc11::TaskBase> m_swap;
+	std::shared_ptr<TaskBase> m_renderDataPrepare;
+    std::shared_ptr<TaskBase> m_createWork;
+	std::shared_ptr<TaskBase> m_work;
+	std::shared_ptr<TaskBase> m_render;
+	std::shared_ptr<TaskBase> m_swap;
 	
-	std::shared_ptr<conc11::TimeIntervalCollector> m_collectors[2];
-	std::shared_ptr<conc11::TimeIntervalCollector> m_lastFrameCollector;
+	std::shared_ptr<TimeIntervalCollector> m_collectors[2];
+	std::shared_ptr<TimeIntervalCollector> m_lastFrameCollector;
 	
 	std::chrono::high_resolution_clock::time_point m_frameStart;
 	std::chrono::high_resolution_clock::time_point m_lastFrameStart;
@@ -129,12 +132,12 @@ MainWindow::MainWindow()
 	for (unsigned int i = 0; i < imageCnt; i++)
 		m_images.push_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 	
-	conc11::g_timeIntervalCollector = m_collectors[0] = std::make_shared<conc11::TimeIntervalCollector>();
-	m_collectors[1] = std::make_shared<conc11::TimeIntervalCollector>();
+	g_timeIntervalCollector = m_collectors[0] = std::make_shared<TimeIntervalCollector>();
+	m_collectors[1] = std::make_shared<TimeIntervalCollector>();
 	
 	m_frameStart = std::chrono::high_resolution_clock::now();
 	
-	m_renderDataPrepare = m_scheduler.createTask([this]
+	m_renderDataPrepare = createTask([this]
 	{
 		std::vector<float>& vertices = m_vertexBuffer;
 		std::vector<float>& colors = m_colorBuffer;
@@ -182,7 +185,7 @@ MainWindow::MainWindow()
 		
 		float dy = 2.0f / m_threadIds.size();
 		float sy = 0.95f * dy;
-		const conc11::TimeIntervalCollector::ContainerType& intervals = m_lastFrameCollector->getIntervals();
+		const TimeIntervalCollector::ContainerType& intervals = m_lastFrameCollector->getIntervals();
 		unsigned int threadIndex = 0;
 		for (auto& threadId : m_threadIds)
 		{
@@ -240,7 +243,7 @@ MainWindow::MainWindow()
         }
 	}, "renderDataPrepare", gray);
 	
-	auto clear = m_scheduler.createTask([this]
+	auto clear = createTask([this]
 	{
 		glClearColor(0, 0, 0.3f, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
@@ -250,7 +253,7 @@ MainWindow::MainWindow()
 	// todo: enablers
 	m_render = clear;
 	
-	auto drawFps = m_scheduler.createTask([this]
+	auto drawFps = createTask([this]
 	{
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
@@ -265,7 +268,7 @@ MainWindow::MainWindow()
 		
 	}, clear, "drawFps", cyan);
 	
-	auto render = m_scheduler.createTask([this]
+	auto render = createTask([this]
 	{
 		m_scheduler.waitJoin(m_renderDataPrepare);
 		
@@ -298,28 +301,28 @@ MainWindow::MainWindow()
 
 	}, drawFps, "drawIntervals", blue);
 	
-	m_createWork = m_scheduler.createTask([this, imageSize, imageCnt]
+	m_createWork = createTask([this, imageSize, imageCnt]
     {
-		std::vector<std::shared_ptr<conc11::TaskBase>> branches;
-		conc11::TaskGroup<unsigned int> allTasks;
+		TaskGroup branches;
+		TypedTaskGroup<unsigned int> allTasks;
 		
         for (unsigned int j = 0; j < 2; j++)
         {
-            conc11::TaskGroup<unsigned int> tasks;
+            TypedTaskGroup<unsigned int> tasks;
             tasks.reserve(imageCnt);
             for (unsigned int i = 0; i < imageCnt; i++)
             {
                 float color[3];
                 lerp(red, green, float(i) / imageCnt, color);
 
-                tasks.push_back(m_scheduler.createTask([this, i, imageSize]
+                tasks.push_back(createTask([this, i, imageSize]
                 {
                     mandel(0, imageSize, imageSize, 0, imageSize, imageSize, m_images[i].get());
                     return (unsigned int)i;
                 }, std::string("mandel") + std::to_string(i), color));
             }
 		
-            branches.push_back(m_scheduler.join(tasks)->then([](std::vector<unsigned int> vals)
+            branches.push_back(join(tasks)->then([](std::vector<unsigned int> vals)
             {
                 return std::accumulate(begin(vals), end(vals), 0U);
             }, std::string("accumulate") + std::to_string(j), magenta));
@@ -327,13 +330,13 @@ MainWindow::MainWindow()
 			allTasks.insert(allTasks.end(), tasks.begin(), tasks.end());
         }
 		
-        m_work = m_scheduler.join(branches);
+        m_work = join(branches);
 		
 		m_scheduler.dispatch(allTasks);
 		
 	}, "createWork", rose);
 	
-	m_swap = m_scheduler.createTask([this]
+	m_swap = createTask([this]
 	{
         m_painter.end();
 		m_context->swapBuffers(this);
@@ -379,12 +382,12 @@ void MainWindow::render()
 {
     m_frameIndex++;
     m_lastFrameStart = m_frameStart;
-    m_lastFrameCollector = conc11::g_timeIntervalCollector;
+    m_lastFrameCollector = g_timeIntervalCollector;
 
     m_frameStart = std::chrono::high_resolution_clock::now();
 
-    conc11::g_timeIntervalCollector = m_collectors[m_frameIndex % 2];
-    conc11::g_timeIntervalCollector->clear();
+    g_timeIntervalCollector = m_collectors[m_frameIndex % 2];
+    g_timeIntervalCollector->clear();
 
 	m_scheduler.dispatch(m_renderDataPrepare);
     m_scheduler.dispatch(m_createWork);
