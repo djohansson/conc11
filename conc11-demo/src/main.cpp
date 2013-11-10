@@ -23,7 +23,7 @@ using namespace conc11;
 namespace conc11
 {
 
-std::shared_ptr<TimeIntervalCollector> g_timeIntervalCollector;
+TimeIntervalCollector* g_timeIntervalCollector = nullptr;
 	
 }
 
@@ -82,7 +82,9 @@ static const float gray[3] = { 0.5f, 0.5f, 0.5f };
 class MainWindow : public OpenGLWindow
 {
 public:
+	
     MainWindow();
+	virtual ~MainWindow();
 	
     virtual void initialize() final;
     virtual void render() final;
@@ -102,8 +104,8 @@ private:
 	std::shared_ptr<TaskBase> m_render;
 	std::shared_ptr<TaskBase> m_swap;
 	
-	std::shared_ptr<TimeIntervalCollector> m_collectors[2];
-	std::shared_ptr<TimeIntervalCollector> m_lastFrameCollector;
+	TimeIntervalCollector m_collectors[2];
+	TimeIntervalCollector* m_lastFrameCollector;
 	
 	std::chrono::high_resolution_clock::time_point m_frameStart;
 	std::chrono::high_resolution_clock::time_point m_lastFrameStart;
@@ -118,7 +120,8 @@ private:
 };
 
 MainWindow::MainWindow()
-: m_program(nullptr)
+: m_lastFrameCollector(nullptr)
+, m_program(nullptr)
 , m_frameIndex(0)
 {
 	auto& threads = m_scheduler.getThreads();
@@ -132,8 +135,7 @@ MainWindow::MainWindow()
 	for (unsigned int i = 0; i < imageCnt; i++)
 		m_images.push_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 	
-	g_timeIntervalCollector = m_collectors[0] = std::make_shared<TimeIntervalCollector>();
-	m_collectors[1] = std::make_shared<TimeIntervalCollector>();
+	g_timeIntervalCollector = &m_collectors[0];
 	
 	m_frameStart = std::chrono::high_resolution_clock::now();
 	
@@ -204,39 +206,39 @@ MainWindow::MainWindow()
 				
 				vertices.push_back(x);
 				vertices.push_back(y);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 				
 				vertices.push_back(x);
 				vertices.push_back(y + sy);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 				
 				vertices.push_back(x);
 				vertices.push_back(y + sy);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y + sy);
-				colors.push_back(ti.debugColor[0]);
-				colors.push_back(ti.debugColor[1]);
-				colors.push_back(ti.debugColor[2]);
+				colors.push_back(get<0>(ti.debugColor));
+				colors.push_back(get<1>(ti.debugColor));
+				colors.push_back(get<2>(ti.debugColor));
 			}
 			
 			threadIndex++;
@@ -343,6 +345,11 @@ MainWindow::MainWindow()
 	}, "swap", yellow);
 }
 
+MainWindow::~MainWindow()
+{
+	g_timeIntervalCollector = nullptr;
+}
+
 void MainWindow::initialize()
 {
     m_program = new QOpenGLShaderProgram(this);
@@ -386,7 +393,7 @@ void MainWindow::render()
 
     m_frameStart = std::chrono::high_resolution_clock::now();
 
-    g_timeIntervalCollector = m_collectors[m_frameIndex % 2];
+    g_timeIntervalCollector = &m_collectors[m_frameIndex % 2];
     g_timeIntervalCollector->clear();
 
 	m_scheduler.dispatch(m_renderDataPrepare);

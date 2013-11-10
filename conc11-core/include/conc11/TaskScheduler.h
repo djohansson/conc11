@@ -229,7 +229,8 @@ void Task<T>::operator()(const TaskScheduler& scheduler)
 	assert(m_function);
 	
 	{
-		ScopedTimeInterval scope(m_name, m_debugColor);
+		assert(g_timeIntervalCollector);
+		ScopedTimeInterval scope(*this, *g_timeIntervalCollector);
 		
 		if (getStatus() == TsDone)
 		{

@@ -16,7 +16,7 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 {
 	typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-	auto t = std::make_shared<Task<ReturnType>>(TpNormal, name, color);
+	auto t = std::make_shared<Task<ReturnType>>(TpNormal);
 	Task<ReturnType>& tref = *t;
 	auto tf = std::function<TaskStatus()>([&tref, f, argIsVoid, fIsVoid]
 	{
@@ -34,7 +34,7 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 {
 	typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 
-	auto t = std::make_shared<Task<ReturnType>>(TpNormal, name, color);
+	auto t = std::make_shared<Task<ReturnType>>(TpNormal);
 	Task<ReturnType>& tref = *t;
 	auto tf = std::function<TaskStatus()>([&tref, f, dependency, argIsVoid, fIsVoid, argIsAssignable]
 	{
@@ -52,7 +52,7 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 
 static std::shared_ptr<Task<UnitType>> joinTasks(const TaskGroup& g)
 {
-	auto t = std::make_shared<Task<UnitType>>(TpHigh, "joinTasks");
+	auto t = std::make_shared<Task<UnitType>>(TpHigh);
 	Task<UnitType>& tref = *t;
 	auto tf = std::function<TaskStatus()>([&tref]
 	{
@@ -81,7 +81,7 @@ static std::shared_ptr<Task<std::vector<T>>> joinTasks(const TypedTaskGroup<T>& 
 	for (auto i : g)
 		fc.push_back(i->getFuture());
 	
-	auto t = std::make_shared<Task<ReturnType>>(TpHigh, "joinTasks");
+	auto t = std::make_shared<Task<ReturnType>>(TpHigh);
 	Task<ReturnType>& tref = *t;
 	auto tf = std::function<TaskStatus()>([&tref, fc]
 	{
@@ -116,7 +116,7 @@ static std::shared_ptr<Task<std::tuple<T, Args...>>> joinTasks(const std::shared
 	FutureContainer fc;
 	SetFutureContainer<(1+sizeof...(Args))>::invoke(t, f0, fn...);
 
-	auto t = std::make_shared<Task<ReturnType>>("joinTasks");
+	auto t = std::make_shared<Task<ReturnType>>(TpHigh);
 	Task<ReturnType>& tref = *t;
 	auto tf = std::function<TaskStatus()>([&tref, fc]
 	{

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TaskTypes.h"
+#include <framework/Bitfields.h>
 
 #include <cassert>
 #include <chrono>
@@ -12,61 +12,33 @@
 
 namespace conc11
 {
+	
+typedef std::chrono::high_resolution_clock ClockType;
+typedef std::chrono::time_point<ClockType> TimePointType;
+	
+struct TimeInterval
+{
+	TimePointType start;
+	TimePointType end;
+	const char* debugName;
+	Bitfields<8, 8, 8, 8> debugColor;
+};
 
 class TimeIntervalCollector
 {
 public:
 
-	typedef std::chrono::high_resolution_clock ClockType;
-
-	struct TimeInterval
-	{
-		typedef std::chrono::time_point<ClockType> TimePointType;
-
-		TimeInterval()
-		{ }
-
-		TimeInterval(const TimePointType& start_)
-			: start(start_)
-		{ }
-
-		TimeInterval(TimePointType&& start_)
-			: start(std::forward<TimePointType>(start_))
-		{ }
-
-		std::chrono::time_point<ClockType> start;
-		std::chrono::time_point<ClockType> end;
-		std::string debugName;
-		float debugColor[3];
-	};
-
 	typedef std::multimap<std::thread::id, TimeInterval> ContainerType;
-	typedef std::pair<std::thread::id, TimeInterval> HandleType;
 
-	TimeIntervalCollector()
-	{ }
-
-	~TimeIntervalCollector()
-	{ }
-
-	inline HandleType begin()
-	{
-		return std::make_pair(std::this_thread::get_id(), TimeInterval(m_clock.now()));
-	}
-
-	inline void end(HandleType handle)
+	inline void insert(const TimeInterval& ti)
 	{
 		std::unique_lock<std::mutex> lock(m_mutex);
-		
-		handle.second.end = m_clock.now();
-
-		m_intervals.insert(handle);
+		m_intervals.insert(std::make_pair(std::this_thread::get_id(), ti));
 	}
 
 	inline void clear()
 	{
 		std::unique_lock<std::mutex> lock(m_mutex);
-		
 		m_intervals.clear();
 	}
 
@@ -77,38 +49,32 @@ public:
 
 private:
 
-	ClockType m_clock;
 	ContainerType m_intervals;
 	std::mutex m_mutex;
 };
 	
-extern std::shared_ptr<TimeIntervalCollector> g_timeIntervalCollector;
+extern TimeIntervalCollector* g_timeIntervalCollector;
 
 class ScopedTimeInterval
 {
 public:
-
-	ScopedTimeInterval(const std::string& debugName = "", const float* debugColor = nullptr)
+	
+	ScopedTimeInterval(TimeInterval& interval, TimeIntervalCollector& collector)
+	: m_interval(interval)
+	, m_collector(collector)
 	{
-		if (g_timeIntervalCollector)
-		{
-			m_handle = g_timeIntervalCollector->begin();
-			
-			TimeIntervalCollector::TimeInterval& ti = m_handle.second;
-			ti.debugName = debugName;
-			if (debugColor != nullptr)
-			{
-				ti.debugColor[0] = debugColor[0];
-				ti.debugColor[1] = debugColor[1];
-				ti.debugColor[2] = debugColor[2];
-			}
-		}
+		m_interval.start = s_clock.now();
+		m_interval.debugName = "debugName";
+		set<0>(m_interval.debugColor, 31);
+		set<1>(m_interval.debugColor, 63);
+		set<2>(m_interval.debugColor, 127);
+		set<3>(m_interval.debugColor, 255);
 	}
 
 	~ScopedTimeInterval()
 	{
-		if (g_timeIntervalCollector)
-			g_timeIntervalCollector->end(m_handle);
+		m_interval.end = s_clock.now();
+		m_collector.insert(m_interval);
 	}
 
 private:
@@ -116,7 +82,9 @@ private:
 	ScopedTimeInterval(const ScopedTimeInterval&);
 	ScopedTimeInterval& operator=(const ScopedTimeInterval&);
 
-	TimeIntervalCollector::HandleType m_handle;
+	TimeInterval& m_interval;
+	TimeIntervalCollector& m_collector;
+	static ClockType s_clock;
 };
 
 } // namespace conc11

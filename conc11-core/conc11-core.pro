@@ -12,3 +12,4 @@ HEADERS += include/conc11/FunctionTraits.h \
 	include/conc11/Thread.h \
 	include/conc11/TimeIntervalCollector.h \
 	include/conc11/TupleElement.h
+	include/framework/Bitfields.h
