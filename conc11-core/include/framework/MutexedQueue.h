@@ -3,9 +3,6 @@
 #include <mutex>
 #include <list>
 
-namespace conc11
-{
-
 template<typename T>
 class MutexedQueue
 {
@@ -49,5 +46,3 @@ private:
     std::mutex m_mutex;
     std::list<T> m_queue;
 };
-
-} // namespace conc11

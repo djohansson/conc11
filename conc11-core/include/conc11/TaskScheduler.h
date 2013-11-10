@@ -1,10 +1,11 @@
 #pragma once
 
-#include "FunctionTraits.h"
+#include <framework/FunctionTraits.h>
+#include <framework/Thread.h>
+
 #include "Task.h"
 #include "TaskUtils.h"
 #include "TaskTypes.h"
-#include "Thread.h"
 
 #include <atomic>
 #include <cassert>
@@ -247,10 +248,7 @@ void Task<T>::operator()(const TaskScheduler& scheduler)
 	
 	if (m_waiters.size() > 0)
 	{
-		if (m_waiters[0]->releaseDependency())
-			scheduler.run(m_waiters[0]);
-		
-		for (unsigned int i = 1; i < m_waiters.size(); i++)
+		for (unsigned int i = 0; i < m_waiters.size(); i++)
 			if (m_waiters[i]->releaseDependency())
 				scheduler.dispatch(m_waiters[i]);
 	}

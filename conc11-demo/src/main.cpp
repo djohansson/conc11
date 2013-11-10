@@ -62,23 +62,6 @@ void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigne
 	}
 }
 
-void lerp(const float a[3], const float b[3], float t, float out[3])
-{
-	out[0] = (1.0f - t) * a[0] + t * b[0];
-	out[1] = (1.0f - t) * a[1] + t * b[1];
-	out[2] = (1.0f - t) * a[2] + t * b[2];
-}
-
-static const float red[3] = { 1.0f, 0.0f, 0.0f };
-static const float green[3] = { 0.0f, 1.0f, 0.0f };
-static const float blue[3] = { 0.0f, 0.0f, 1.0f };
-static const float yellow[3] = { 1.0f, 1.0f, 0.0f };
-static const float cyan[3] = { 0.0f, 1.0f, 1.0f };
-static const float magenta[3] = { 1.0f, 0.0f, 1.0f };
-static const float pink[3] = { 1.0f, 0.5f, 1.0f };
-static const float rose[3] = { 1.0f, 0.5f, 0.5f };
-static const float gray[3] = { 0.5f, 0.5f, 0.5f };
-
 class MainWindow : public OpenGLWindow
 {
 public:
@@ -112,7 +95,7 @@ private:
 	
     QOpenGLShaderProgram* m_program;
 	std::vector<float> m_vertexBuffer;
-	std::vector<float> m_colorBuffer;
+	std::vector<Color> m_colorBuffer;
 
     QPainter m_painter;
 	
@@ -142,47 +125,37 @@ MainWindow::MainWindow()
 	m_renderDataPrepare = createTask([this]
 	{
 		std::vector<float>& vertices = m_vertexBuffer;
-		std::vector<float>& colors = m_colorBuffer;
+		std::vector<Color>& colors = m_colorBuffer;
 		
 		vertices.clear();
 		colors.clear();
 		
 		{
+			static const Color c0 = createColor(0, 64, 0, 255);
+			
 			vertices.push_back(-1);
 			vertices.push_back(-1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 			
 			vertices.push_back(-1);
 			vertices.push_back(1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 			
 			vertices.push_back(1);
 			vertices.push_back(-1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 			
 			vertices.push_back(-1);
 			vertices.push_back(1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 			
 			vertices.push_back(1);
 			vertices.push_back(-1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 			
 			vertices.push_back(1);
 			vertices.push_back(1);
-			colors.push_back(0);
-			colors.push_back(0.3f);
-			colors.push_back(0);
+			colors.push_back(c0);
 		}
 		
 		float dy = 2.0f / m_threadIds.size();
@@ -206,75 +179,49 @@ MainWindow::MainWindow()
 				
 				vertices.push_back(x);
 				vertices.push_back(y);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 				
 				vertices.push_back(x);
 				vertices.push_back(y + sy);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 				
 				vertices.push_back(x);
 				vertices.push_back(y + sy);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 				
 				vertices.push_back(x + sx);
 				vertices.push_back(y + sy);
-				colors.push_back(get<0>(ti.debugColor));
-				colors.push_back(get<1>(ti.debugColor));
-				colors.push_back(get<2>(ti.debugColor));
+				colors.push_back(ti.color);
 			}
 			
 			threadIndex++;
         }
-	}, "renderDataPrepare", gray);
+	}, "renderDataPrepare", createColor(0, 128, 0, 255));
 	
-	auto clear = createTask([this]
-	{
-		glClearColor(0, 0, 0.3f, 0);
-		glClear(GL_COLOR_BUFFER_BIT);
-        m_painter.begin(m_device);
-	}, "clear", pink);
-	
-	// todo: enablers
-	m_render = clear;
-	
-	auto drawFps = createTask([this]
+	m_render = createTask([this]
 	{
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
-
+		
+		glClearColor(0, 0, 0.3f, 0);
+		glClear(GL_COLOR_BUFFER_BIT);
+        
+		m_painter.begin(m_device);
         m_painter.setWindow(0, 0, width(), height());
-
-        //m_painter.setPen(Qt::blue);
-        //m_painter.drawRect(0, 0, width(), height());
+		
         m_painter.setPen(Qt::white);
         m_painter.setFont(QFont("Arial", 30));
         m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
-		
-	}, clear, "drawFps", cyan);
-	
-	auto render = createTask([this]
-	{
-		m_scheduler.waitJoin(m_renderDataPrepare);
-		
-        m_painter.beginNativePainting();
+
+        m_painter.end();
 
 		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 		
@@ -286,8 +233,10 @@ MainWindow::MainWindow()
     //	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
+		m_scheduler.waitJoin(m_renderDataPrepare);
+
 		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, m_vertexBuffer.data());
-		glVertexAttribPointer(m_colAttr, 3, GL_FLOAT, GL_FALSE, 0, m_colorBuffer.data());
+		glVertexAttribPointer(m_colAttr, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, m_colorBuffer.data());
 		
 		glEnableVertexAttribArray(0);
 		glEnableVertexAttribArray(1);
@@ -299,14 +248,12 @@ MainWindow::MainWindow()
 		
         m_program->release();
 
-        m_painter.endNativePainting();
-
-	}, drawFps, "drawIntervals", blue);
+	}, "render", createColor(255, 0, 0, 255));
 	
 	m_createWork = createTask([this, imageSize, imageCnt]
     {
 		TaskGroup branches;
-		TypedTaskGroup<unsigned int> allTasks;
+		auto launcher = createTask([]{}, "launcher", createColor(255, 255, 255, 255));
 		
         for (unsigned int j = 0; j < 2; j++)
         {
@@ -314,35 +261,29 @@ MainWindow::MainWindow()
             tasks.reserve(imageCnt);
             for (unsigned int i = 0; i < imageCnt; i++)
             {
-                float color[3];
-                lerp(red, green, float(i) / imageCnt, color);
-
                 tasks.push_back(createTask([this, i, imageSize]
                 {
                     mandel(0, imageSize, imageSize, 0, imageSize, imageSize, m_images[i].get());
-                    return (unsigned int)i;
-                }, std::string("mandel") + std::to_string(i), color));
+                    return i;
+                }, launcher, std::string("mandel") + std::to_string(i), createColor(0, j ? 0 : i*(256/imageCnt), j ? i*(256/imageCnt) : 0, 255)));
             }
 		
             branches.push_back(join(tasks)->then([](std::vector<unsigned int> vals)
             {
                 return std::accumulate(begin(vals), end(vals), 0U);
-            }, std::string("accumulate") + std::to_string(j), magenta));
-			
-			allTasks.insert(allTasks.end(), tasks.begin(), tasks.end());
+            }, std::string("accumulate") + std::to_string(j), createColor(0, 128, 128, 255)));
         }
 		
         m_work = join(branches);
 		
-		m_scheduler.dispatch(allTasks);
+		m_scheduler.dispatch(launcher);
 		
-	}, "createWork", rose);
+	}, "createWork", createColor(255, 255, 255, 255));
 	
 	m_swap = createTask([this]
 	{
-        m_painter.end();
 		m_context->swapBuffers(this);
-	}, "swap", yellow);
+	}, "swap", createColor(255, 255, 0, 255));
 }
 
 MainWindow::~MainWindow()

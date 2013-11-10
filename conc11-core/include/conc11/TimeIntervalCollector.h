@@ -20,8 +20,8 @@ struct TimeInterval
 {
 	TimePointType start;
 	TimePointType end;
-	const char* debugName;
-	Bitfields<8, 8, 8, 8> debugColor;
+	std::string name;
+	Bitfields<8, 8, 8, 8> color;
 };
 
 class TimeIntervalCollector
@@ -64,11 +64,6 @@ public:
 	, m_collector(collector)
 	{
 		m_interval.start = s_clock.now();
-		m_interval.debugName = "debugName";
-		set<0>(m_interval.debugColor, 31);
-		set<1>(m_interval.debugColor, 63);
-		set<2>(m_interval.debugColor, 127);
-		set<3>(m_interval.debugColor, 255);
 	}
 
 	~ScopedTimeInterval()

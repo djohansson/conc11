@@ -1,6 +1,7 @@
 #pragma once
 
-#include "FunctionTraits.h"
+#include <framework/FunctionTraits.h>
+
 #include "TimeIntervalCollector.h"
 #include "TaskTypes.h"
 
@@ -123,12 +124,14 @@ public:
 	}
 
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, const std::string& name = "", const float* color = nullptr)
+	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, std::string&& name = "", Color&& color = Color())
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
 		auto t = std::make_shared<Task<ThenReturnType>>(TpHigh);
 		Task<ThenReturnType>& tref = *t;
+		tref.name = std::forward<std::string>(name);
+		tref.color = std::forward<Color>(color);
 		auto tf = std::function<TaskStatus()>([this, &tref, f]
 		{
 			trySetFuncResult(*tref.getPromise(), f, m_future,
@@ -185,11 +188,45 @@ private:
 	TaskPriority m_priority;
 	mutable std::atomic<uint32_t> m_waitCount;
 };
+	
+class TaskGroupBase
+{
+public:
+	
+	inline const std::string& getName() const { return m_name; }
+	inline void setName(std::string&& name) { m_name = std::forward<std::string>(name); }
+
+	inline Color getColor() const { return m_color; }
+	inline void setColor(Color&& color) { m_color = std::forward<Color>(color); }
+
+protected:
+	
+	std::string m_name;
+	Color m_color;
+};
+
+class TaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<TaskBase>>
+{
+public:
+	
+	TaskGroup()
+	{
+		setName("TaskGroup");
+		setColor(createColor(128, 128, 128, 255));
+	}
+};
 
 template <typename T>
-class TypedTaskGroup : public std::vector<std::shared_ptr<Task<T>>> { };
+class TypedTaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<Task<T>>>
+{
+public:
 	
-class TaskGroup : public std::vector<std::shared_ptr<TaskBase>> { };
+	TypedTaskGroup()
+	{
+		setName("TypedTaskGroup");
+		setColor(createColor(128, 128, 128, 255));
+	}
+};
 
 
 } // namespace conc11

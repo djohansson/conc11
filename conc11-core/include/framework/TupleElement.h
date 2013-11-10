@@ -2,9 +2,6 @@
 
 // This header contains platform specific workarounds for problems regarding std::tuple_element
 
-namespace conc11
-{
-
 #if defined(_MSC_VER)
 
 // VC++ 2012 CTP does not like our variadic implementation of tuple, so we have to default to the std version which still uses macro expansion :(
@@ -66,4 +63,3 @@ struct TupleElement<I, const volatile Tuple> : public TupleElement<I, Tuple>
 
 #endif
 
-} // namespace conc11

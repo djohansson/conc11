@@ -1,13 +1,9 @@
 #pragma once
 
-#include "TaskTypes.h"
-#include "TupleElement.h"
+#include <framework/TupleElement.h>
 
 #include <tuple>
 #include <type_traits>
-
-namespace conc11
-{
 
 template<typename T>
 struct FunctionTraits : FunctionTraits<decltype(&T::operator())> 
@@ -63,5 +59,3 @@ struct FunctionTraits<R(*)(Args...)>
         typedef typename TupleElement<N, TupleType>::type Type;
 	};
 };
-
-} // namespace conc11

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <future>
+#include <framework/Bitfields.h>
 
 #if (_MSC_VER >= 1600)
 #include <concurrent_unordered_map.h>
@@ -12,14 +12,37 @@
 #include <tbb/concurrent_queue.h>
 #include <tbb/concurrent_vector.h>
 #else
-#include "MutexedQueue.h"
+#include <framework/MutexedQueue.h>
 #endif
 #endif
+
+#include <future>
 
 namespace conc11
 {
 
 typedef unsigned char UnitType;
+	
+typedef Bitfields<8, 8, 8, 8> Color;
+enum ColorComponent
+{
+	CcRed = 0,
+	CcGreen = 1,
+	CcBlue = 2,
+	CcAlpha = 3,
+	
+	CcCount
+};
+	
+inline static Color createColor(unsigned red, unsigned green, unsigned blue, unsigned alpha)
+{
+	Color c;
+	set<CcRed>(c, red);
+	set<CcGreen>(c, green);
+	set<CcBlue>(c, blue);
+	set<CcAlpha>(c, alpha);
+	return c;
+}
 
 template<typename T>
 struct VoidToUnitType
