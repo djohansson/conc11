@@ -102,6 +102,8 @@ public:
 	// join in on task queue, returning once task t has finished
 	void waitJoin(const std::shared_ptr<TaskBase>& t) const
     {
+		assert(t.get());
+		
 		std::shared_ptr<TaskBase> qt;
 		while (true)
         {
@@ -248,9 +250,12 @@ void Task<T>::operator()(const TaskScheduler& scheduler)
 	
 	if (m_waiters.size() > 0)
 	{
-		for (unsigned int i = 0; i < m_waiters.size(); i++)
+		for (unsigned int i = 1; i < m_waiters.size(); i++)
 			if (m_waiters[i]->releaseDependency())
 				scheduler.dispatch(m_waiters[i]);
+		
+		if (m_waiters[0]->releaseDependency())
+			scheduler.run(m_waiters[0]);
 	}
 }
 

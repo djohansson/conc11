@@ -193,6 +193,16 @@ class TaskGroupBase
 {
 public:
 	
+	TaskGroupBase(const std::string& name, Color color)
+	: m_color(color)
+	, m_name(name)
+	{ }
+	
+	TaskGroupBase(std::string&& name, Color&& color)
+	: m_color(std::forward<Color>(color))
+	, m_name(std::forward<std::string>(name))
+	{ }
+	
 	inline const std::string& getName() const { return m_name; }
 	inline void setName(std::string&& name) { m_name = std::forward<std::string>(name); }
 
@@ -201,8 +211,8 @@ public:
 
 protected:
 	
-	std::string m_name;
 	Color m_color;
+	std::string m_name;
 };
 
 class TaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<TaskBase>>
@@ -210,10 +220,8 @@ class TaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<TaskB
 public:
 	
 	TaskGroup()
-	{
-		setName("TaskGroup");
-		setColor(createColor(128, 128, 128, 255));
-	}
+	: TaskGroupBase("TaskGroup", createColor(128, 128, 128, 255))
+	{ }
 };
 
 template <typename T>
@@ -222,10 +230,8 @@ class TypedTaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<
 public:
 	
 	TypedTaskGroup()
-	{
-		setName("TypedTaskGroup");
-		setColor(createColor(128, 128, 128, 255));
-	}
+	: TaskGroupBase("TypedTaskGroup", createColor(128, 128, 128, 255))
+	{ }
 };
 
 

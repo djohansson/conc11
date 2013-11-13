@@ -20,8 +20,8 @@ struct TimeInterval
 {
 	TimePointType start;
 	TimePointType end;
-	std::string name;
 	Bitfields<8, 8, 8, 8> color;
+	std::string name;
 };
 
 class TimeIntervalCollector

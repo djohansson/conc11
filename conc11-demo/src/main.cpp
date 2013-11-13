@@ -83,7 +83,7 @@ private:
 	
 	std::shared_ptr<TaskBase> m_renderDataPrepare;
     std::shared_ptr<TaskBase> m_createWork;
-	std::shared_ptr<TaskBase> m_work;
+	std::shared_ptr<TaskBase> m_workDone;
 	std::shared_ptr<TaskBase> m_render;
 	std::shared_ptr<TaskBase> m_swap;
 	
@@ -270,15 +270,18 @@ MainWindow::MainWindow()
 		
             branches.push_back(join(tasks)->then([](std::vector<unsigned int> vals)
             {
-                return std::accumulate(begin(vals), end(vals), 0U);
+                return std::accumulate(vals.begin(), vals.end(), 0U);
             }, std::string("accumulate") + std::to_string(j), createColor(0, 128, 128, 255)));
         }
 		
-        m_work = join(branches);
+        m_workDone = join(branches);
 		
 		m_scheduler.dispatch(launcher);
 		
 	}, "createWork", createColor(255, 255, 255, 255));
+	
+	m_workDone = createTask([]{}, "no work today", createColor(255, 255, 255, 255));
+	m_scheduler.run(m_workDone);
 	
 	m_swap = createTask([this]
 	{
@@ -337,10 +340,10 @@ void MainWindow::render()
     g_timeIntervalCollector = &m_collectors[m_frameIndex % 2];
     g_timeIntervalCollector->clear();
 
+	m_scheduler.waitJoin(m_workDone);
 	m_scheduler.dispatch(m_renderDataPrepare);
     m_scheduler.dispatch(m_createWork);
 	m_scheduler.run(m_render);
-	m_scheduler.waitJoin(m_work);
 	m_scheduler.run(m_swap);
 }
 
