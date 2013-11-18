@@ -4,14 +4,7 @@ CONFIG += debug_and_release
 CONFIG += c++11
 CONFIG -= app_bundle
 
-LIBS += -L$$OUT_PWD/../local -lconc11-core
 DESTDIR = ../local
-
-win32 {
-}
-
-macx {
-}
 
 INCLUDEPATH += $$PWD/../conc11-core/src
 DEPENDPATH += $$PWD/../conc11-core/src
@@ -22,3 +15,10 @@ HEADERS += \
 SOURCES += \
 	src/main.cpp \
 	src/openglwindow.cpp
+
+win32 {
+LIBS += -L$$OUT_PWD/../local -lconc11-core
+}
+
+macx {
+}

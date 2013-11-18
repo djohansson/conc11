@@ -112,6 +112,7 @@ public:
 	
 	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) final
 	{
+		waiter->setStatus(TsPending);
 		m_waiters.push_back(waiter);
 	}
 

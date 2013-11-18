@@ -106,28 +106,28 @@ public:
 	// join in on task queue, returning once task t has finished
 	void waitJoin(const std::shared_ptr<TaskBase>& t) const
     {
-		if (t.get() == nullptr || t->getStatus() == TsUnscheduled)
-			return;
-		
-		std::shared_ptr<TaskBase> qt;
-		while (true)
-        {
-			for (auto& q : m_queues)
+		if (t.get() != nullptr && t->getStatus() == TsPending)
+		{
+			std::shared_ptr<TaskBase> qt;
+			while (true)
 			{
-				while (q.try_pop(qt))
+				for (auto& q : m_queues)
 				{
-					assert(qt.get() != nullptr);
-					(*qt)(*this);
+					while (q.try_pop(qt))
+					{
+						assert(qt.get() != nullptr);
+						(*qt)(*this);
+						
+						if (t->getStatus() == TsDone)
+							return;
+					}
 					
 					if (t->getStatus() == TsDone)
 						return;
 				}
 				
-				if (t->getStatus() == TsDone)
-					return;
+				std::this_thread::yield();
 			}
-			
-			std::this_thread::yield();
 		}
 	}
 

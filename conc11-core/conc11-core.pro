@@ -18,6 +18,10 @@ HEADERS += \
 	src/framework/Thread.h \
 	src/framework/TupleElement.h
 
+win32 {
 SOURCES += \
 	src/framework/HighResClock.cpp
+}
 
+macx {
+}

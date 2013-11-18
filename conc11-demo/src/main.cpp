@@ -96,7 +96,7 @@ private:
 };
 
 MainWindow::MainWindow()
-: m_scheduler(std::make_unique<TaskScheduler>())
+: m_scheduler(new TaskScheduler)
 , m_program(nullptr)
 , m_frameIndex(0)
 {
@@ -199,7 +199,7 @@ MainWindow::MainWindow()
 			
 			threadIndex++;
         }
-	}, "renderDataPrepare", createColor(0, 128, 0, 255));
+	}, "renderDataPrepare", createColor(255, 128, 128, 255));
 	
 	m_render = createTask([this]
 	{
@@ -269,9 +269,9 @@ MainWindow::MainWindow()
 		
         m_workDone = join(branches);
 		
-		m_scheduler->run(launcher);
+		m_scheduler->dispatch(launcher);
 		
-	}, "createWork", createColor(255, 255, 255, 255));
+	}, "createWork", createColor(128, 128, 128, 255));
 		
 	m_swap = createTask([this]
 	{
