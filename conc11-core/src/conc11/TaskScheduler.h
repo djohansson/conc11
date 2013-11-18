@@ -89,6 +89,10 @@ public:
 	inline void run(const T& t) const
 	{
 		assert(t.get() != nullptr);
+
+		if (t->getStatus() == TsDone)
+			t->reset();
+
 		(*t)(*this);
 	}
 	
@@ -102,7 +106,8 @@ public:
 	// join in on task queue, returning once task t has finished
 	void waitJoin(const std::shared_ptr<TaskBase>& t) const
     {
-		assert(t.get());
+		if (t.get() == nullptr || t->getStatus() == TsUnscheduled)
+			return;
 		
 		std::shared_ptr<TaskBase> qt;
 		while (true)
@@ -114,17 +119,20 @@ public:
 					assert(qt.get() != nullptr);
 					(*qt)(*this);
 					
-					if (t.get() != nullptr && t->getStatus() == TsDone)
+					if (t->getStatus() == TsDone)
 						return;
 				}
 				
-				if (t.get() != nullptr && t->getStatus() == TsDone)
+				if (t->getStatus() == TsDone)
 					return;
 			}
 			
 			std::this_thread::yield();
 		}
 	}
+
+	inline const std::shared_ptr<TimeIntervalCollector>& getTimeIntervalCollector() const { return m_collector; }
+	inline void setTimeIntervalCollector(const std::shared_ptr<TimeIntervalCollector>& collector) { m_collector = collector; }
 
 private:
 	
@@ -173,6 +181,11 @@ private:
 	{
 		assert(t.get() != nullptr);
 		
+		if (t->getStatus() == TsDone)
+			t->reset();
+
+		t->setStatus(TsPending);
+
 		m_queues[t->getPriority()].push(t);
 
 		wakeThreads(1);
@@ -185,6 +198,12 @@ private:
 		for (auto t : g)
 		{
 			assert(t.get() != nullptr);
+			
+			if (t->getStatus() == TsDone)
+				t->reset();
+
+			t->setStatus(TsPending);
+			
 			m_queues[t->getPriority()].push(t);
 		}
 		
@@ -202,6 +221,12 @@ private:
 		for (auto t : g)
 		{
 			assert(t.get() != nullptr);
+			
+			if (t->getStatus() == TsDone)
+				t->reset();
+
+			t->setStatus(TsPending);
+			
 			m_queues[t->getPriority()].push(std::static_pointer_cast<TaskBase>(t));
 		}
 		
@@ -224,6 +249,9 @@ private:
 
 	// main thread only state
     std::vector<Thread> m_threads;
+
+	// profiling
+	std::shared_ptr<TimeIntervalCollector> m_collector;
 };
 
 template <typename T>
@@ -232,17 +260,7 @@ void Task<T>::operator()(const TaskScheduler& scheduler)
 	assert(m_function);
 	
 	{
-		assert(g_timeIntervalCollector);
-		ScopedTimeInterval scope(*this, *g_timeIntervalCollector);
-		
-		if (getStatus() == TsDone)
-		{
-			reset();
-			
-			for (auto t : m_waiters)
-				t->addDependency();
-		}
-		
+		ScopedTimeInterval scope(m_interval, m_color, scheduler.getTimeIntervalCollector());		
 		setStatus(m_function());
 	}
 	

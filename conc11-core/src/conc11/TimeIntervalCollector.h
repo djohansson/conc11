@@ -1,10 +1,12 @@
 #pragma once
 
 #include <framework/Bitfields.h>
+#include <framework/HighResClock.h>
 
 #include <cassert>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -13,15 +15,11 @@
 namespace conc11
 {
 	
-typedef std::chrono::high_resolution_clock ClockType;
-typedef std::chrono::time_point<ClockType> TimePointType;
-	
 struct TimeInterval
 {
-	TimePointType start;
-	TimePointType end;
-	Bitfields<8, 8, 8, 8> color;
-	std::string name;
+	HighResTimePointType start;
+	HighResTimePointType end;
+	Color color;
 };
 
 class TimeIntervalCollector
@@ -52,24 +50,24 @@ private:
 	ContainerType m_intervals;
 	std::mutex m_mutex;
 };
-	
-extern TimeIntervalCollector* g_timeIntervalCollector;
 
 class ScopedTimeInterval
 {
 public:
 	
-	ScopedTimeInterval(TimeInterval& interval, TimeIntervalCollector& collector)
+	ScopedTimeInterval(TimeInterval& interval, Color color, const std::shared_ptr<TimeIntervalCollector>& collector)
 	: m_interval(interval)
 	, m_collector(collector)
 	{
-		m_interval.start = s_clock.now();
+		m_interval.color = color;
+		m_interval.start = HighResClock::now();
 	}
 
 	~ScopedTimeInterval()
 	{
-		m_interval.end = s_clock.now();
-		m_collector.insert(m_interval);
+		m_interval.end = HighResClock::now();
+		if (std::shared_ptr<TimeIntervalCollector> collector = m_collector.lock())
+			collector->insert(m_interval);
 	}
 
 private:
@@ -78,8 +76,7 @@ private:
 	ScopedTimeInterval& operator=(const ScopedTimeInterval&);
 
 	TimeInterval& m_interval;
-	TimeIntervalCollector& m_collector;
-	static ClockType s_clock;
+	std::weak_ptr<TimeIntervalCollector> m_collector;
 };
 
 } // namespace conc11

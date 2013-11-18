@@ -4,12 +4,8 @@ CONFIG += debug_and_release
 CONFIG += c++11
 CONFIG -= app_bundle
 
-CONFIG(debug, debug|release) {
-    TARGET = $$join(TARGET,,,-debug)
-#   LIBS += -L$$OUT_PWD/../conc11-core/release/ -lconc11-core
-} else {
-#   LIBS += -L$$OUT_PWD/../conc11-core/debug/ -lconc11-core
-}
+LIBS += -L$$OUT_PWD/../local -lconc11-core
+DESTDIR = ../local
 
 win32 {
 }
@@ -17,12 +13,12 @@ win32 {
 macx {
 }
 
-INCLUDEPATH += $$PWD/../conc11-core/include
-DEPENDPATH += $$PWD/../conc11-core/include
+INCLUDEPATH += $$PWD/../conc11-core/src
+DEPENDPATH += $$PWD/../conc11-core/src
 
 HEADERS += \
-    src/openglwindow.h
+	src/openglwindow.h
 
 SOURCES += \
-    src/main.cpp \
-    src/openglwindow.cpp
+	src/main.cpp \
+	src/openglwindow.cpp

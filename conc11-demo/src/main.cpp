@@ -11,21 +11,14 @@
 #include <conc11/TaskScheduler.h>
 #include <conc11/TaskUtils.h>
 #include <conc11/TimeIntervalCollector.h>
+#include <framework/HighResClock.h>
 
-#include <chrono>
 #include <memory>
 #include <numeric>
 #include <thread>
 #include <vector>
 
 using namespace conc11;
-
-namespace conc11
-{
-
-TimeIntervalCollector* g_timeIntervalCollector = nullptr;
-	
-}
 
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
 {
@@ -77,7 +70,7 @@ private:
     GLuint m_colAttr;
 	GLuint m_matrixUniform;
 	
-	TaskScheduler m_scheduler;
+	std::unique_ptr<TaskScheduler> m_scheduler;
 	std::vector<std::thread::id> m_threadIds;
 	std::vector<std::unique_ptr<unsigned>> m_images;
 	
@@ -87,11 +80,11 @@ private:
 	std::shared_ptr<TaskBase> m_render;
 	std::shared_ptr<TaskBase> m_swap;
 	
-	TimeIntervalCollector m_collectors[2];
-	TimeIntervalCollector* m_lastFrameCollector;
+	std::shared_ptr<TimeIntervalCollector> m_collectors[2];
+	std::shared_ptr<TimeIntervalCollector> m_lastFrameCollector;
 	
-	std::chrono::high_resolution_clock::time_point m_frameStart;
-	std::chrono::high_resolution_clock::time_point m_lastFrameStart;
+	HighResTimePointType m_frameStart;
+	HighResTimePointType m_lastFrameStart;
 	
     QOpenGLShaderProgram* m_program;
 	std::vector<float> m_vertexBuffer;
@@ -103,11 +96,11 @@ private:
 };
 
 MainWindow::MainWindow()
-: m_lastFrameCollector(nullptr)
+: m_scheduler(std::make_unique<TaskScheduler>())
 , m_program(nullptr)
 , m_frameIndex(0)
 {
-	auto& threads = m_scheduler.getThreads();
+	auto& threads = m_scheduler->getThreads();
 	m_threadIds.reserve(threads.size() + 1);
 	m_threadIds.push_back(std::this_thread::get_id());
     for (const auto& t : threads)
@@ -118,9 +111,11 @@ MainWindow::MainWindow()
 	for (unsigned int i = 0; i < imageCnt; i++)
 		m_images.push_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 	
-	g_timeIntervalCollector = &m_collectors[0];
+	m_collectors[0].reset(new TimeIntervalCollector);
+	m_collectors[1].reset(new TimeIntervalCollector);
+	m_lastFrameCollector = m_collectors[0];
 	
-	m_frameStart = std::chrono::high_resolution_clock::now();
+	m_frameStart = HighResClock::now();
 	
 	m_renderDataPrepare = createTask([this]
 	{
@@ -233,8 +228,6 @@ MainWindow::MainWindow()
     //	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
-		m_scheduler.waitJoin(m_renderDataPrepare);
-
 		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, m_vertexBuffer.data());
 		glVertexAttribPointer(m_colAttr, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, m_colorBuffer.data());
 		
@@ -276,13 +269,10 @@ MainWindow::MainWindow()
 		
         m_workDone = join(branches);
 		
-		m_scheduler.dispatch(launcher);
+		m_scheduler->run(launcher);
 		
 	}, "createWork", createColor(255, 255, 255, 255));
-	
-	m_workDone = createTask([]{}, "no work today", createColor(255, 255, 255, 255));
-	m_scheduler.run(m_workDone);
-	
+		
 	m_swap = createTask([this]
 	{
 		m_context->swapBuffers(this);
@@ -291,7 +281,7 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
-	g_timeIntervalCollector = nullptr;
+	m_scheduler.reset();
 }
 
 void MainWindow::initialize()
@@ -331,20 +321,20 @@ void MainWindow::initialize()
 
 void MainWindow::render()
 {
-    m_frameIndex++;
     m_lastFrameStart = m_frameStart;
-    m_lastFrameCollector = g_timeIntervalCollector;
+	m_frameStart = HighResClock::now();
+	m_lastFrameCollector = m_collectors[m_frameIndex % 2];
+	++m_frameIndex;
+	m_collectors[m_frameIndex % 2]->clear();
+	m_scheduler->setTimeIntervalCollector(m_collectors[m_frameIndex % 2]);
 
-    m_frameStart = std::chrono::high_resolution_clock::now();
-
-    g_timeIntervalCollector = &m_collectors[m_frameIndex % 2];
-    g_timeIntervalCollector->clear();
-
-	m_scheduler.waitJoin(m_workDone);
-	m_scheduler.dispatch(m_renderDataPrepare);
-    m_scheduler.dispatch(m_createWork);
-	m_scheduler.run(m_render);
-	m_scheduler.run(m_swap);
+	m_scheduler->dispatch(m_renderDataPrepare);
+	m_scheduler->dispatch(m_createWork);
+	m_scheduler->waitJoin(m_renderDataPrepare);
+	m_scheduler->run(m_render);
+	m_scheduler->waitJoin(m_createWork);
+	m_scheduler->waitJoin(m_workDone);
+	m_scheduler->run(m_swap);
 }
 
 int main(int argc, char **argv)

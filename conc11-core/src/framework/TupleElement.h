@@ -1,14 +1,6 @@
 #pragma once
 
-// This header contains platform specific workarounds for problems regarding std::tuple_element
-
-#if defined(_MSC_VER)
-
-// VC++ 2012 CTP does not like our variadic implementation of tuple, so we have to default to the std version which still uses macro expansion :(
-template<unsigned int I, typename... Args>
-struct TupleElement : std::tuple_element<I, Args...> { };
-
-#else // clang has a variadic implementation, but it has errors in it. so we use our own.
+// This header contains workarounds for problems regarding std::tuple_element
 
 template<unsigned int I, typename Tuple>
 struct TupleElement;
@@ -60,6 +52,4 @@ struct TupleElement<I, const volatile Tuple> : public TupleElement<I, Tuple>
     typedef TupleElement<I, Tuple> basetype;
     typedef typename std::add_cv<typename basetype::type>::type type;
 };
-
-#endif
 

@@ -11,10 +11,8 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 {
 	typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 	
-	auto t = std::make_shared<Task<ReturnType>>(TpNormal);
+	auto t = std::make_shared<Task<ReturnType>>(TpNormal, std::forward<std::string>(name), std::forward<Color>(color));
 	Task<ReturnType>& tref = *t;
-	tref.name = std::forward<std::string>(name);
-	tref.color = std::forward<Color>(color);
 	auto tf = std::function<TaskStatus()>([&tref, f, argIsVoid, fIsVoid]
 	{
 		trySetFuncResult(*tref.getPromise(), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
@@ -31,13 +29,12 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 {
 	typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
 	
-	auto t = std::make_shared<Task<ReturnType>>(TpNormal);
+	auto t = std::make_shared<Task<ReturnType>>(TpNormal, std::forward<std::string>(name), std::forward<Color>(color));
 	Task<ReturnType>& tref = *t;
-	tref.name = std::forward<std::string>(name);
-	tref.color = std::forward<Color>(color);
-	auto tf = std::function<TaskStatus()>([&tref, f, dependency, argIsVoid, fIsVoid, argIsAssignable]
+	auto depFuture = dependency->getFuture();
+	auto tf = std::function<TaskStatus()>([&tref, f, depFuture, argIsVoid, fIsVoid, argIsAssignable]
 	{
-		trySetFuncResult(*tref.getPromise(), f, dependency->getFuture(), argIsVoid, fIsVoid, argIsAssignable);
+		trySetFuncResult(*tref.getPromise(), f, depFuture, argIsVoid, fIsVoid, argIsAssignable);
 
 		return TsDone;
 	});

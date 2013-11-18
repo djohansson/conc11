@@ -42,10 +42,8 @@ static std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func
 
 static std::shared_ptr<Task<UnitType>> join(const TaskGroup& g)
 {
-	auto t = std::make_shared<Task<UnitType>>(TpHigh);
+	auto t = std::make_shared<Task<UnitType>>(TpHigh, std::move(std::string("join").append(g.getName())), g.getColor());
 	Task<UnitType>& tref = *t;
-	tref.name = std::string("join").append(g.getName());
-	tref.color = g.getColor();
 	auto tf = std::function<TaskStatus()>([&tref]
 	{
 		trySetResult(*tref.getPromise());
@@ -74,10 +72,8 @@ static std::shared_ptr<Task<std::vector<T>>> join(const TypedTaskGroup<T>& g)
 	for (auto i : g)
 		fc.push_back(i->getFuture());
 	
-	auto t = std::make_shared<Task<ReturnType>>(TpHigh);
+	auto t = std::make_shared<Task<ReturnType>>(TpHigh, std::move(std::string("join").append(g.getName())), g.getColor());
 	Task<ReturnType>& tref = *t;
-	tref.name = std::string("join").append(g.getName());
-	tref.color = g.getColor();
 	auto tf = std::function<TaskStatus()>([&tref, fc]
 	{
 		ReturnType ret;

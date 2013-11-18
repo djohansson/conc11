@@ -89,3 +89,24 @@ void set(Bitfields<sizes...>& bf, unsigned val)
 {
 	setImpl<pos, 0>(bf, val);
 }
+
+typedef Bitfields<8, 8, 8, 8> Color;
+enum ColorComponent
+{
+	CcRed = 0,
+	CcGreen = 1,
+	CcBlue = 2,
+	CcAlpha = 3,
+
+	CcCount
+};
+
+inline static Color createColor(unsigned red, unsigned green, unsigned blue, unsigned alpha)
+{
+	Color c;
+	set<CcRed>(c, red);
+	set<CcGreen>(c, green);
+	set<CcBlue>(c, blue);
+	set<CcAlpha>(c, alpha);
+	return c;
+}
