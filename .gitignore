@@ -56,3 +56,6 @@ moc_*.*
 *.xcworkspacedata
 
 *.plist
+*.dll
+*.exp
+*.lib
