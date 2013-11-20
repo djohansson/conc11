@@ -237,18 +237,9 @@ MainWindow::MainWindow()
 		auto fps = 1e9 / double(dt);
 
 		glClearColor(0, 0, 0.3f, 0);
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		m_painter.begin(m_device);
-		m_painter.setWindow(0, 0, width(), height());
-
-		m_painter.setPen(Qt::white);
-		m_painter.setFont(QFont("Arial", 30));
-		m_painter.drawText(0, 0, 150, 30, Qt::AlignCenter, std::to_string(fps).c_str());
-
-		m_painter.end();
-
-		m_painter.beginNativePainting();
+		glClearDepth(0.0);
+		glClearStencil(0);
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
 
 		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 
@@ -257,7 +248,7 @@ MainWindow::MainWindow()
 		QMatrix4x4 matrix;
 		matrix.perspective(60, float(width()) / float(height()), 0.1f, 100.0f);
 		matrix.translate(0, 0, -2);
-		matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
+	//	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 
 		glVertexAttribPointer(m_posAttr, 2, GL_FLOAT, GL_FALSE, 0, m_vertexBuffer.data());
@@ -272,6 +263,15 @@ MainWindow::MainWindow()
 		glDisableVertexAttribArray(0);
 
 		m_program->release();
+
+		m_painter.begin(m_device);
+		m_painter.setWindow(0, 0, width(), height());
+
+		m_painter.setPen(Qt::white);
+		m_painter.setFont(QFont("Arial", 30));
+		m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
+
+		m_painter.end();
 
 	}, "render", createColor(255, 0, 0, 255));
 

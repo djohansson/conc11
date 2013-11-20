@@ -1,12 +1,13 @@
 #pragma once
 
 #include <QtGui/QWindow>
+#include <QtGui/QOpenGLFunctions>
 #include <QtGui/QOpenGLFunctions_4_3_Core>
 
 class QOpenGLContext;
 class QOpenGLPaintDevice;
 
-class OpenGLWindow : public QWindow, public QOpenGLFunctions_4_3_Core
+class OpenGLWindow : public QWindow, public QOpenGLFunctions
 {
 	Q_OBJECT
 
@@ -30,6 +31,8 @@ protected:
 
 	QOpenGLContext* m_context;
 	QOpenGLPaintDevice* m_device;
+	QOpenGLContext* m_ogl43Context;
+	QOpenGLFunctions_4_3_Core* m_ogl43;
 
 private:
 	bool m_updatePending;
