@@ -32,7 +32,7 @@ protected:
 	QOpenGLContext* m_context;
 	QOpenGLPaintDevice* m_device;
 	QOpenGLContext* m_ogl43Context;
-	QOpenGLFunctions_4_3_Core* m_ogl43;
+	QOpenGLFunctions_4_3_Core* m_ogl43Functions;
 
 private:
 	bool m_updatePending;
