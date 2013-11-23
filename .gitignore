@@ -56,10 +56,11 @@ moc_*.*
 *.xcworkspacedata
 
 *.plist
+
 *.dll
+
 *.exp
+
 *.lib
 
-local/conc11-demo
-
-local/conc11-demo
+local/*
