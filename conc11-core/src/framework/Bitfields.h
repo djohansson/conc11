@@ -41,6 +41,8 @@ public:
 	
 	template <unsigned pos, unsigned b4, unsigned size, unsigned... more>
 	friend void setImpl(Bitfields<size, more...>& bf, unsigned val);
+
+	inline StoreType getStore() const { return m_store; }
 	
 private:
 	

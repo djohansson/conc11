@@ -30,9 +30,11 @@ protected:
 	void resizeEvent(QResizeEvent* event);
 
 	QOpenGLContext* m_context;
-	QOpenGLPaintDevice* m_device;
+	QOpenGLContext* m_defaultContext;
 	QOpenGLContext* m_ogl43Context;
 	QOpenGLFunctions_4_3_Core* m_ogl43Functions;
+	QOpenGLPaintDevice* m_device;
+	bool m_renderEnable;
 
 private:
 	bool m_updatePending;

@@ -4,32 +4,39 @@
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLPaintDevice>
 
-#include <cassert>
-
 OpenGLWindow::OpenGLWindow(QWindow* parent)
 : QWindow(parent)
 , m_context(nullptr)
-, m_device(nullptr)
+, m_defaultContext(nullptr)
 , m_ogl43Context(nullptr)
 , m_ogl43Functions(nullptr)
+, m_device(nullptr)
+, m_renderEnable(true)
 , m_updatePending(false)
 , m_animating(false)
 {
 	QSurfaceFormat format = requestedFormat();
 	format.setRenderableType(QSurfaceFormat::OpenGL);
-	//format.setOption(QSurfaceFormat::DebugContext);
+	format.setOption(QSurfaceFormat::DebugContext);
 
 	setSurfaceType(QWindow::OpenGLSurface);
 	setFormat(format);
 	create();
-
-	/*
-	m_context = new QOpenGLContext(this);
-	m_context->setFormat(format);
-	m_context->create();
-	m_context->makeCurrent(this);
+	
+	m_defaultContext = new QOpenGLContext(this);
+	m_defaultContext->setFormat(format);
+	m_defaultContext->create();
+	m_defaultContext->makeCurrent(this);
 	initializeOpenGLFunctions();
-	*/
+
+	Q_ASSERT(m_defaultContext);
+	m_context = m_defaultContext;
+
+	if (!m_device)
+	{
+		m_device = new QOpenGLPaintDevice(size());
+		m_device->setDevicePixelRatio(devicePixelRatio());
+	}
 	
 	format.setVersion(4, 3);
 	format.setProfile(QSurfaceFormat::CoreProfile);
@@ -37,19 +44,12 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	m_ogl43Context = new QOpenGLContext(this);
 	m_ogl43Context->setFormat(format);
 	m_ogl43Context->create();
-	m_ogl43Context->setShareContext(m_context);
+	m_ogl43Context->setShareContext(m_defaultContext);
 	m_ogl43Context->makeCurrent(this);
 	m_ogl43Functions = m_ogl43Context->versionFunctions<QOpenGLFunctions_4_3_Core>();
+	
 	if (m_ogl43Functions)
 		m_context = m_ogl43Context;
-	
-	/*
-	if (!m_device)
-	{
-		m_device = new QOpenGLPaintDevice(size());
-		m_device->setDevicePixelRatio(devicePixelRatio());
-	}
-	 */
 }
 
 OpenGLWindow::~OpenGLWindow()
@@ -91,7 +91,7 @@ void OpenGLWindow::resizeEvent(QResizeEvent* /*event*/)
 
 void OpenGLWindow::renderNow()
 {
-	if (!isExposed())
+	if (!m_renderEnable || !isExposed())
 		return;
 
 	m_updatePending = false;

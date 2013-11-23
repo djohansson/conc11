@@ -145,6 +145,7 @@ MainWindow::MainWindow()
 	m_positionBuffer.allocate(16*1024 * 2 * sizeof(float));
 	m_program->enableAttributeArray(m_posAttr);
 	m_program->setAttributeBuffer(m_posAttr, GL_FLOAT, 0, 2);
+	m_positionBuffer.release();
 	
 	m_colorBuffer.create();
 	m_colorBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
@@ -152,12 +153,25 @@ MainWindow::MainWindow()
 	m_colorBuffer.allocate(16*1024 * sizeof(Color::StoreType));
 	m_program->enableAttributeArray(m_colAttr);
 	m_program->setAttributeBuffer(m_colAttr, GL_UNSIGNED_BYTE, 0, 4);
+	m_colorBuffer.release();
+	
+	m_vao->release();
 	
 	m_logger = new QOpenGLDebugLogger(this);
 	
     connect(
 		m_logger, &QOpenGLDebugLogger::messageLogged,
-		this, [](QOpenGLDebugMessage message){ qDebug() << message; },
+		this, [this](QOpenGLDebugMessage message)
+		{
+			m_renderEnable = false;
+			
+			qDebug() << message;
+
+			if (message.severity() < QOpenGLDebugMessage::LowSeverity)
+				Q_ASSERT(false);
+
+			m_renderEnable = true;
+		},
 		Qt::DirectConnection);
 	
     if (m_logger->initialize())
@@ -185,53 +199,46 @@ MainWindow::MainWindow()
 
 	m_renderDataPrepare = createTask([this]
 	{
-		union ColorUnion
-		{
-			ColorUnion()
-			: i(0)
-			{}
-			
-			Color c;
-			Color::StoreType i;
-		};
-		
+		m_context->makeCurrent(this);
+
+		m_positionBuffer.bind();
 		float* positions = static_cast<float*>(m_positionBuffer.map(QOpenGLBuffer::WriteOnly));
+		m_colorBuffer.bind();
 		Color::StoreType* colors = static_cast<Color::StoreType*>(m_colorBuffer.map(QOpenGLBuffer::WriteOnly));
 		
-		assert(positions);
-		assert(colors);
+		Q_ASSERT(positions);
+		Q_ASSERT(colors);
 		
 		unsigned int pi = 0;
 		unsigned int ci = 0;
 		
 		{
 			
-			ColorUnion c0;
-			c0.c = createColor(0, 64, 0, 255);
+			static const Color c0 = createColor(0, 64, 0, 255);
 			
 			positions[pi++] = -1;
 			positions[pi++] = -1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 			
 			positions[pi++] = -1;
 			positions[pi++] = 1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 			
 			positions[pi++] = 1;
 			positions[pi++] = -1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 			
 			positions[pi++] = -1;
 			positions[pi++] = 1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 			
 			positions[pi++] = 1;
 			positions[pi++] = -1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 			
 			positions[pi++] = 1;
 			positions[pi++] = 1;
-			colors[ci++] = c0.i;
+			colors[ci++] = c0.getStore();
 		}
 		
 		float dy = 2.0f / m_threadIds.size();
@@ -244,9 +251,7 @@ MainWindow::MainWindow()
 			for (auto it = ip.first; it != ip.second; it++)
 			{
 				auto& ti = (*it).second;
-				
-				ColorUnion c;
-				c.c = ti.color;
+				const Color& c = ti.color;
 				
 				auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
 				auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
@@ -258,33 +263,35 @@ MainWindow::MainWindow()
 				
 				positions[pi++] = x;
 				positions[pi++] = y;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 				
 				positions[pi++] = x;
 				positions[pi++] = y + sy;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 				
 				positions[pi++] = x + sx;
 				positions[pi++] = y;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 				
 				positions[pi++] = x;
 				positions[pi++] = y + sy;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 				
 				positions[pi++] = x + sx;
 				positions[pi++] = y;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 				
 				positions[pi++] = x + sx;
 				positions[pi++] = y + sy;
-				colors[ci++] = c.i;
+				colors[ci++] = c.getStore();
 			}
 			
 			threadIndex++;
 		}
 		
+		m_positionBuffer.bind();
 		m_positionBuffer.unmap();
+		m_colorBuffer.bind();
 		m_colorBuffer.unmap();
 		
 	}, "renderDataPrepare", createColor(255, 128, 128, 255));
@@ -293,6 +300,8 @@ MainWindow::MainWindow()
 	{
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
+
+		m_context->makeCurrent(this);
 
 		glClearColor(0, 0, 0.3f, 0);
 		glClear(GL_COLOR_BUFFER_BIT);
@@ -305,7 +314,7 @@ MainWindow::MainWindow()
 		QMatrix4x4 matrix;
 		matrix.perspective(60, float(width()) / float(height()), 0.1f, 100.0f);
 		matrix.translate(0, 0, -2);
-		matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
+	//	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
 		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
@@ -313,7 +322,8 @@ MainWindow::MainWindow()
 		m_vao->release();
 		m_program->release();
 
-		/*
+		m_defaultContext->makeCurrent(this);
+
 		m_painter.begin(m_device);
 		m_painter.setWindow(0, 0, width(), height());
 
@@ -322,7 +332,6 @@ MainWindow::MainWindow()
 		m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
 
 		m_painter.end();
-		 */
 
 	}, "render", createColor(255, 0, 0, 255));
 
@@ -387,7 +396,7 @@ int main(int argc, char **argv)
 {
 	QGuiApplication app(argc, argv);
 	QScreen* screen = app.primaryScreen();
-	assert(screen != nullptr);
+	Q_ASSERT(screen != nullptr);
 
 	MainWindow window;
 	window.setScreen(screen);
