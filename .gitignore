@@ -59,3 +59,7 @@ moc_*.*
 *.dll
 *.exp
 *.lib
+
+local/conc11-demo
+
+local/conc11-demo

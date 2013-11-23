@@ -2,12 +2,13 @@
 
 #include <QtGui/QGuiApplication>
 #include <QtGui/QOpenGLBuffer>
-#include <QtGui/QOpenGLShaderProgram>
+#include <QtGui/QOpenGLDebugLogger>
 #include <QtGui/QOpenGLPaintDevice>
+#include <QtGui/QOpenGLShaderProgram>
 #include <QtGui/QOpenGLVertexArrayObject>
-#include <QtGui/QScreen>
 #include <QtGui/QPainter>
 #include <QtGui/QPaintEngine>
+#include <QtGui/QScreen>
 
 #include <conc11/Task.h>
 #include <conc11/TaskScheduler.h>
@@ -21,6 +22,27 @@
 #include <vector>
 
 using namespace conc11;
+
+static const char* g_vertexShaderSource =
+R"(#version 150
+in highp vec4 posAttr;
+in lowp vec4 colAttr;
+out lowp vec4 col;
+uniform mat4 matrix;
+void main()
+{
+	col = colAttr;
+	gl_Position = matrix * posAttr;
+})";
+
+static const char* g_fragmentShaderSource =
+R"(#version 150
+in lowp vec4 col;
+out lowp vec4 fragColor;
+void main()
+{
+	fragColor = col;
+})";
 
 void mandel(unsigned xmin, unsigned xmax, unsigned xsize, unsigned ymin, unsigned ymax, unsigned ysize, unsigned* image)
 {
@@ -91,6 +113,7 @@ private:
 	QOpenGLVertexArrayObject* m_vao;
 	QOpenGLBuffer m_positionBuffer;
 	QOpenGLBuffer m_colorBuffer;
+	QOpenGLDebugLogger* m_logger;
 	
 	QPainter m_painter;
 
@@ -104,54 +127,44 @@ MainWindow::MainWindow()
 , m_colorBuffer(QOpenGLBuffer::VertexBuffer)
 , m_frameIndex(0)
 {
-	static const char* vertexShaderSource =
-		R"(
-		#version 150
-		attribute highp vec4 posAttr;
-		attribute lowp vec4 colAttr;
-		out lowp vec4 col;
-		uniform highp mat4 matrix;
-		void main()
-		{
-			col = colAttr;
-			gl_Position = matrix * posAttr;
-		}
-	)";
-	
-	static const char* fragmentShaderSource =
-		R"(
-		#version 120
-		in lowp vec4 col;
-		void main()
-		{
-			gl_FragColor = col;
-		}
-	)";
-
-	m_context->makeCurrent(this);
 	m_program = new QOpenGLShaderProgram(this);
-	m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShaderSource);
-	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShaderSource);
+	m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, g_vertexShaderSource);
+	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, g_fragmentShaderSource);
 	m_program->link();
 	m_posAttr = m_program->attributeLocation("posAttr");
 	m_colAttr = m_program->attributeLocation("colAttr");
+	m_matrixUniform = m_program->uniformLocation("matrix");
+	
 	m_vao = new QOpenGLVertexArrayObject(this);
 	m_vao->create();
 	m_vao->bind();
+	
 	m_positionBuffer.create();
 	m_positionBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_positionBuffer.bind();
 	m_positionBuffer.allocate(16*1024 * 2 * sizeof(float));
 	m_program->enableAttributeArray(m_posAttr);
 	m_program->setAttributeBuffer(m_posAttr, GL_FLOAT, 0, 2);
+	
 	m_colorBuffer.create();
 	m_colorBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_colorBuffer.bind();
-	m_colorBuffer.allocate(16*1024 * sizeof(Color));
+	m_colorBuffer.allocate(16*1024 * sizeof(Color::StoreType));
 	m_program->enableAttributeArray(m_colAttr);
 	m_program->setAttributeBuffer(m_colAttr, GL_UNSIGNED_BYTE, 0, 4);
-	m_matrixUniform = m_program->uniformLocation("matrix");
-	m_context->doneCurrent();
+	
+	m_logger = new QOpenGLDebugLogger(this);
+	
+    connect(
+		m_logger, &QOpenGLDebugLogger::messageLogged,
+		this, [](QOpenGLDebugMessage message){ qDebug() << message; },
+		Qt::DirectConnection);
+	
+    if (m_logger->initialize())
+	{
+        m_logger->startLogging(QOpenGLDebugLogger::SynchronousLogging);
+        m_logger->enableMessages();
+    }
 
 	auto& threads = m_scheduler.getThreads();
 	m_threadIds.reserve(threads.size() + 1);
@@ -172,35 +185,53 @@ MainWindow::MainWindow()
 
 	m_renderDataPrepare = createTask([this]
 	{
-		std::vector<float> positions;
-		std::vector<Color> colors;
+		union ColorUnion
+		{
+			ColorUnion()
+			: i(0)
+			{}
+			
+			Color c;
+			Color::StoreType i;
+		};
+		
+		float* positions = static_cast<float*>(m_positionBuffer.map(QOpenGLBuffer::WriteOnly));
+		Color::StoreType* colors = static_cast<Color::StoreType*>(m_colorBuffer.map(QOpenGLBuffer::WriteOnly));
+		
+		assert(positions);
+		assert(colors);
+		
+		unsigned int pi = 0;
+		unsigned int ci = 0;
 		
 		{
-			static const Color c0 = createColor(0, 64, 0, 255);
 			
-			positions.push_back(-1);
-			positions.push_back(-1);
-			colors.push_back(c0);
+			ColorUnion c0;
+			c0.c = createColor(0, 64, 0, 255);
 			
-			positions.push_back(-1);
-			positions.push_back(1);
-			colors.push_back(c0);
+			positions[pi++] = -1;
+			positions[pi++] = -1;
+			colors[ci++] = c0.i;
 			
-			positions.push_back(1);
-			positions.push_back(-1);
-			colors.push_back(c0);
+			positions[pi++] = -1;
+			positions[pi++] = 1;
+			colors[ci++] = c0.i;
 			
-			positions.push_back(-1);
-			positions.push_back(1);
-			colors.push_back(c0);
+			positions[pi++] = 1;
+			positions[pi++] = -1;
+			colors[ci++] = c0.i;
 			
-			positions.push_back(1);
-			positions.push_back(-1);
-			colors.push_back(c0);
+			positions[pi++] = -1;
+			positions[pi++] = 1;
+			colors[ci++] = c0.i;
 			
-			positions.push_back(1);
-			positions.push_back(1);
-			colors.push_back(c0);
+			positions[pi++] = 1;
+			positions[pi++] = -1;
+			colors[ci++] = c0.i;
+			
+			positions[pi++] = 1;
+			positions[pi++] = 1;
+			colors[ci++] = c0.i;
 		}
 		
 		float dy = 2.0f / m_threadIds.size();
@@ -214,6 +245,9 @@ MainWindow::MainWindow()
 			{
 				auto& ti = (*it).second;
 				
+				ColorUnion c;
+				c.c = ti.color;
+				
 				auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
 				auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
 				
@@ -222,36 +256,36 @@ MainWindow::MainWindow()
 				float y = -1 + (threadIndex * dy);
 				float sx = scale * static_cast<float>(duration) / 1e9f;
 				
-				positions.push_back(x);
-				positions.push_back(y);
-				colors.push_back(ti.color);
+				positions[pi++] = x;
+				positions[pi++] = y;
+				colors[ci++] = c.i;
 				
-				positions.push_back(x);
-				positions.push_back(y + sy);
-				colors.push_back(ti.color);
+				positions[pi++] = x;
+				positions[pi++] = y + sy;
+				colors[ci++] = c.i;
 				
-				positions.push_back(x + sx);
-				positions.push_back(y);
-				colors.push_back(ti.color);
+				positions[pi++] = x + sx;
+				positions[pi++] = y;
+				colors[ci++] = c.i;
 				
-				positions.push_back(x);
-				positions.push_back(y + sy);
-				colors.push_back(ti.color);
+				positions[pi++] = x;
+				positions[pi++] = y + sy;
+				colors[ci++] = c.i;
 				
-				positions.push_back(x + sx);
-				positions.push_back(y);
-				colors.push_back(ti.color);
+				positions[pi++] = x + sx;
+				positions[pi++] = y;
+				colors[ci++] = c.i;
 				
-				positions.push_back(x + sx);
-				positions.push_back(y + sy);
-				colors.push_back(ti.color);
+				positions[pi++] = x + sx;
+				positions[pi++] = y + sy;
+				colors[ci++] = c.i;
 			}
 			
 			threadIndex++;
 		}
 		
-		m_positionBuffer.write(0, positions.data(), (int)positions.size());
-		m_colorBuffer.write(0, colors.data(), (int)colors.size());
+		m_positionBuffer.unmap();
+		m_colorBuffer.unmap();
 		
 	}, "renderDataPrepare", createColor(255, 128, 128, 255));
 
@@ -261,9 +295,7 @@ MainWindow::MainWindow()
 		auto fps = 1e9 / double(dt);
 
 		glClearColor(0, 0, 0.3f, 0);
-		glClearDepth(0.0);
-		glClearStencil(0);
-		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT);
 
 		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 
@@ -273,7 +305,7 @@ MainWindow::MainWindow()
 		QMatrix4x4 matrix;
 		matrix.perspective(60, float(width()) / float(height()), 0.1f, 100.0f);
 		matrix.translate(0, 0, -2);
-	//	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
+		matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
 		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
@@ -281,6 +313,7 @@ MainWindow::MainWindow()
 		m_vao->release();
 		m_program->release();
 
+		/*
 		m_painter.begin(m_device);
 		m_painter.setWindow(0, 0, width(), height());
 
@@ -289,6 +322,7 @@ MainWindow::MainWindow()
 		m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
 
 		m_painter.end();
+		 */
 
 	}, "render", createColor(255, 0, 0, 255));
 
