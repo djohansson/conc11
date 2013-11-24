@@ -6,11 +6,7 @@
 
 OpenGLWindow::OpenGLWindow(QWindow* parent)
 : QWindow(parent)
-, m_context(nullptr)
-, m_defaultContext(nullptr)
-, m_ogl43Context(nullptr)
-, m_ogl43Functions(nullptr)
-, m_device(nullptr)
+, m_glFunctions(nullptr)
 , m_renderEnable(true)
 , m_updatePending(false)
 , m_animating(false)
@@ -18,38 +14,29 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	QSurfaceFormat format = requestedFormat();
 	format.setRenderableType(QSurfaceFormat::OpenGL);
 	format.setOption(QSurfaceFormat::DebugContext);
+	format.setVersion(4, 3);
+	format.setProfile(QSurfaceFormat::CoreProfile);
 
 	setSurfaceType(QWindow::OpenGLSurface);
 	setFormat(format);
 	create();
 	
-	m_defaultContext = new QOpenGLContext(this);
-	m_defaultContext->setFormat(format);
-	m_defaultContext->create();
-	m_defaultContext->makeCurrent(this);
-	initializeOpenGLFunctions();
-
-	Q_ASSERT(m_defaultContext);
-	m_context = m_defaultContext;
-
-	if (!m_device)
-	{
-		m_device = new QOpenGLPaintDevice(size());
-		m_device->setDevicePixelRatio(devicePixelRatio());
-	}
+	m_context.reset(new QOpenGLContext(this));
+	m_context->setFormat(format);
+	m_context->create();
+	m_context->makeCurrent(this);
 	
-	format.setVersion(4, 3);
-	format.setProfile(QSurfaceFormat::CoreProfile);
-
-	m_ogl43Context = new QOpenGLContext(this);
-	m_ogl43Context->setFormat(format);
-	m_ogl43Context->create();
-	m_ogl43Context->setShareContext(m_defaultContext);
-	m_ogl43Context->makeCurrent(this);
-	m_ogl43Functions = m_ogl43Context->versionFunctions<QOpenGLFunctions_4_3_Core>();
+	Q_ASSERT(m_context);
 	
-	if (m_ogl43Functions)
-		m_context = m_ogl43Context;
+	m_glFunctions = m_context->versionFunctions<QOpenGLFunctions_4_3_Core>();
+	m_glFunctions->initializeOpenGLFunctions();
+	
+	Q_ASSERT(m_glFunctions);
+	
+	m_device.reset(new QOpenGLPaintDevice(size()));
+	m_device->setDevicePixelRatio(devicePixelRatio());
+	
+	Q_ASSERT(m_device);
 }
 
 OpenGLWindow::~OpenGLWindow()

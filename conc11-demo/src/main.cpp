@@ -113,7 +113,7 @@ private:
 	QOpenGLVertexArrayObject* m_vao;
 	QOpenGLBuffer m_positionBuffer;
 	QOpenGLBuffer m_colorBuffer;
-	QOpenGLDebugLogger* m_logger;
+	std::unique_ptr<QOpenGLDebugLogger> m_logger;
 	
 	QPainter m_painter;
 
@@ -125,12 +125,18 @@ MainWindow::MainWindow()
 , m_vao(nullptr)
 , m_positionBuffer(QOpenGLBuffer::VertexBuffer)
 , m_colorBuffer(QOpenGLBuffer::VertexBuffer)
+, m_logger(nullptr)
 , m_frameIndex(0)
 {
 	m_program = new QOpenGLShaderProgram(this);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, g_vertexShaderSource);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, g_fragmentShaderSource);
 	m_program->link();
+	
+	auto gl = gl43();
+	Q_ASSERT(gl);
+	gl->glReleaseShaderCompiler();
+	
 	m_posAttr = m_program->attributeLocation("posAttr");
 	m_colAttr = m_program->attributeLocation("colAttr");
 	m_matrixUniform = m_program->uniformLocation("matrix");
@@ -157,20 +163,20 @@ MainWindow::MainWindow()
 	
 	m_vao->release();
 	
-	m_logger = new QOpenGLDebugLogger(this);
+	m_logger.reset(new QOpenGLDebugLogger(this));
 	
     connect(
-		m_logger, &QOpenGLDebugLogger::messageLogged,
+		m_logger.get(), &QOpenGLDebugLogger::messageLogged,
 		this, [this](QOpenGLDebugMessage message)
 		{
-			m_renderEnable = false;
+			setRenderEnable(false);
 			
 			qDebug() << message;
 
 			if (message.severity() < QOpenGLDebugMessage::LowSeverity)
 				Q_ASSERT(false);
 
-			m_renderEnable = true;
+			setRenderEnable(true);
 		},
 		Qt::DirectConnection);
 	
@@ -302,11 +308,12 @@ MainWindow::MainWindow()
 		auto fps = 1e9 / double(dt);
 
 		m_context->makeCurrent(this);
+		auto gl = gl43();
+		Q_ASSERT(gl);
 
-		glClearColor(0, 0, 0.3f, 0);
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
+		gl->glClearColor(0, 0, 0.3f, 0);
+		gl->glClear(GL_COLOR_BUFFER_BIT);
+		gl->glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 
 		m_program->bind();
 		m_vao->bind();
@@ -317,14 +324,12 @@ MainWindow::MainWindow()
 	//	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
 		m_program->setUniformValue(m_matrixUniform, matrix);
 		
-		glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
+		gl->glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
 		
 		m_vao->release();
 		m_program->release();
 
-		m_defaultContext->makeCurrent(this);
-
-		m_painter.begin(m_device);
+		m_painter.begin(m_device.get());
 		m_painter.setWindow(0, 0, width(), height());
 
 		m_painter.setPen(Qt::white);
