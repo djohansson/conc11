@@ -64,3 +64,7 @@ moc_*.*
 *.lib
 
 local/*
+
+*.vsp
+
+*.psess

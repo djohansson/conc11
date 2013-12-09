@@ -38,9 +38,10 @@ protected:
 
 	inline QOpenGLFunctions_4_3_Core* gl43() const { return static_cast<QOpenGLFunctions_4_3_Core*>(m_glFunctions); }
 	
-	std::unique_ptr<QOpenGLContext> m_context;
 	QAbstractOpenGLFunctions* m_glFunctions;
-	std::unique_ptr<QOpenGLPaintDevice> m_device;
+	std::unique_ptr<QOpenGLContext> m_context;
+	std::unique_ptr<QOpenGLContext> m_paintContext;
+	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
 
 private:
 	

@@ -32,11 +32,20 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	m_glFunctions->initializeOpenGLFunctions();
 	
 	Q_ASSERT(m_glFunctions);
+
+	format.setVersion(2, 1);
 	
-	m_device.reset(new QOpenGLPaintDevice(size()));
-	m_device->setDevicePixelRatio(devicePixelRatio());
+	m_paintContext.reset(new QOpenGLContext(this));
+	m_paintContext->setFormat(format);
+	m_paintContext->create();
+	m_paintContext->makeCurrent(this);
+
+	m_paintDevice.reset(new QOpenGLPaintDevice(size()));
+	m_paintDevice->setDevicePixelRatio(devicePixelRatio());
 	
-	Q_ASSERT(m_device);
+	Q_ASSERT(m_paintDevice);
+
+	m_paintContext->doneCurrent();
 }
 
 OpenGLWindow::~OpenGLWindow()
@@ -85,8 +94,8 @@ void OpenGLWindow::renderNow()
 
 	m_context->makeCurrent(this);
 	
-	if (m_device)
-		m_device->setSize(size());
+	if (m_paintDevice)
+		m_paintDevice->setSize(size());
 
 	render();
 

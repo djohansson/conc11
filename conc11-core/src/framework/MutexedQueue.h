@@ -17,7 +17,7 @@ public:
     bool push(T item)
     {
         std::list<T> tmp;
-        tmp.push_back(std::move(item));
+        tmp.emplace_back(std::move(item));
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_queue.splice(std::end(m_queue), tmp);

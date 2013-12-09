@@ -103,8 +103,7 @@ private:
 	std::shared_ptr<TaskBase> m_render;
 	std::shared_ptr<TaskBase> m_swap;
 
-	std::shared_ptr<TimeIntervalCollector> m_collectors[2];
-	std::shared_ptr<TimeIntervalCollector> m_lastFrameCollector;
+	std::vector<std::shared_ptr<TimeIntervalCollector>> m_collectors;
 
 	HighResTimePointType m_frameStart;
 	HighResTimePointType m_lastFrameStart;
@@ -128,6 +127,8 @@ MainWindow::MainWindow()
 , m_logger(nullptr)
 , m_frameIndex(0)
 {
+	m_context->makeCurrent(this);
+
 	m_program = new QOpenGLShaderProgram(this);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Vertex, g_vertexShaderSource);
 	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, g_fragmentShaderSource);
@@ -165,20 +166,18 @@ MainWindow::MainWindow()
 	
 	m_logger.reset(new QOpenGLDebugLogger(this));
 	
-    connect(
-		m_logger.get(), &QOpenGLDebugLogger::messageLogged,
-		this, [this](QOpenGLDebugMessage message)
-		{
-			setRenderEnable(false);
-			
-			qDebug() << message;
+	auto glDebugHandler = [this](QOpenGLDebugMessage message)
+	{
+		setRenderEnable(false);
 
-			if (message.severity() < QOpenGLDebugMessage::LowSeverity)
-				Q_ASSERT(false);
+		qDebug() << message;
 
-			setRenderEnable(true);
-		},
-		Qt::DirectConnection);
+		Q_ASSERT(message.severity() >= QOpenGLDebugMessage::LowSeverity);
+
+		setRenderEnable(true);
+	};
+
+    connect(m_logger.get(), &QOpenGLDebugLogger::messageLogged, this, glDebugHandler, Qt::DirectConnection);
 	
     if (m_logger->initialize())
 	{
@@ -195,12 +194,12 @@ MainWindow::MainWindow()
 	const unsigned int imageSize = 128;
 	const unsigned int imageCnt = 64;
 	for (unsigned int i = 0; i < imageCnt; i++)
-		m_images.push_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
+		m_images.emplace_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 
-	m_collectors[0].reset(new TimeIntervalCollector);
-	m_collectors[1].reset(new TimeIntervalCollector);
-	m_lastFrameCollector = m_collectors[0];
-
+	const unsigned int collectorCount = 2;
+	for (unsigned int i = 0; i < collectorCount; i++)
+		m_collectors.emplace_back(std::make_unique<TimeIntervalCollector>());
+	
 	m_frameStart = HighResClock::now();
 
 	m_renderDataPrepare = createTask([this]
@@ -219,8 +218,7 @@ MainWindow::MainWindow()
 		unsigned int ci = 0;
 		
 		{
-			
-			static const Color c0 = createColor(0, 64, 0, 255);
+			static const Color c0 = createColor(0, 64, 0, 64);
 			
 			positions[pi++] = -1;
 			positions[pi++] = -1;
@@ -247,53 +245,61 @@ MainWindow::MainWindow()
 			colors[ci++] = c0.getStore();
 		}
 		
+		float fx = 2.0f / (m_collectors.size() - 1);
 		float dy = 2.0f / m_threadIds.size();
 		float sy = 0.95f * dy;
-		const TimeIntervalCollector::ContainerType& intervals = m_lastFrameCollector->getIntervals();
-		unsigned int threadIndex = 0;
-		for (auto& threadId : m_threadIds)
+		for (unsigned int i = 1; i < static_cast<unsigned int>(m_collectors.size()); ++i)
 		{
-			auto ip = intervals.equal_range(threadId);
-			for (auto it = ip.first; it != ip.second; it++)
+			const TimeIntervalCollector::ContainerType& intervals = m_collectors[(m_frameIndex - i) % m_collectors.size()]->getIntervals();
+			unsigned int threadIndex = 0;
+			for (auto& threadId : m_threadIds)
 			{
-				auto& ti = (*it).second;
-				const Color& c = ti.color;
-				
-				auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
-				auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
-				
-				static float scale = 64.0f;
-				float x = -1 + scale * static_cast<float>(start) / 1e9f;
-				float y = -1 + (threadIndex * dy);
-				float sx = scale * static_cast<float>(duration) / 1e9f;
-				
-				positions[pi++] = x;
-				positions[pi++] = y;
-				colors[ci++] = c.getStore();
-				
-				positions[pi++] = x;
-				positions[pi++] = y + sy;
-				colors[ci++] = c.getStore();
-				
-				positions[pi++] = x + sx;
-				positions[pi++] = y;
-				colors[ci++] = c.getStore();
-				
-				positions[pi++] = x;
-				positions[pi++] = y + sy;
-				colors[ci++] = c.getStore();
-				
-				positions[pi++] = x + sx;
-				positions[pi++] = y;
-				colors[ci++] = c.getStore();
-				
-				positions[pi++] = x + sx;
-				positions[pi++] = y + sy;
-				colors[ci++] = c.getStore();
+				auto ip = intervals.equal_range(threadId);
+				for (auto it = ip.first; it != ip.second; it++)
+				{
+					auto& ti = (*it).second;
+					const Color& c = ti.color;
+
+					auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
+					auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
+
+					static float apa = 64.0f;
+					float scaleX = (apa / (m_collectors.size() - 1)) / 1e9f;
+					float x = -1 + fx * (i - 1) + scaleX * static_cast<float>(start);
+					float y = -1 + (threadIndex * dy);
+					float sx = scaleX * static_cast<float>(duration);
+
+					positions[pi++] = x;
+					positions[pi++] = y;
+					colors[ci++] = c.getStore();
+
+					positions[pi++] = x;
+					positions[pi++] = y + sy;
+					colors[ci++] = c.getStore();
+
+					positions[pi++] = x + sx;
+					positions[pi++] = y;
+					colors[ci++] = c.getStore();
+
+					positions[pi++] = x;
+					positions[pi++] = y + sy;
+					colors[ci++] = c.getStore();
+
+					positions[pi++] = x + sx;
+					positions[pi++] = y;
+					colors[ci++] = c.getStore();
+
+					positions[pi++] = x + sx;
+					positions[pi++] = y + sy;
+					colors[ci++] = c.getStore();
+				}
+
+				threadIndex++;
 			}
-			
-			threadIndex++;
 		}
+
+		assert(pi < m_positionBuffer.size() / (2 * sizeof(float)));
+		assert(ci < m_colorBuffer.size() / sizeof(Color::StoreType));
 		
 		m_positionBuffer.bind();
 		m_positionBuffer.unmap();
@@ -307,36 +313,40 @@ MainWindow::MainWindow()
 		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
 		auto fps = 1e9 / double(dt);
 
-		m_context->makeCurrent(this);
-		auto gl = gl43();
-		Q_ASSERT(gl);
+		{
+			m_context->makeCurrent(this);
+			auto gl = gl43();
+			Q_ASSERT(gl);
 
-		gl->glClearColor(0, 0, 0.3f, 0);
-		gl->glClear(GL_COLOR_BUFFER_BIT);
-		gl->glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
+			gl->glClearColor(0, 0, 0.3f, 0);
+			gl->glClear(GL_COLOR_BUFFER_BIT);
+			gl->glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 
-		m_program->bind();
-		m_vao->bind();
-		
-		QMatrix4x4 matrix;
-		matrix.perspective(60, float(width()) / float(height()), 0.1f, 100.0f);
-		matrix.translate(0, 0, -2);
-	//	matrix.rotate(100.0f * m_frameIndex / screen()->refreshRate(), 0, 1, 0);
-		m_program->setUniformValue(m_matrixUniform, matrix);
-		
-		gl->glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
-		
-		m_vao->release();
-		m_program->release();
+			m_program->bind();
+			m_vao->bind();
 
-		m_painter.begin(m_device.get());
-		m_painter.setWindow(0, 0, width(), height());
+			QMatrix4x4 matrix;
+			matrix.ortho(-1, 1, -1, 1, -1, 1);
+			m_program->setUniformValue(m_matrixUniform, matrix);
 
-		m_painter.setPen(Qt::white);
-		m_painter.setFont(QFont("Arial", 30));
-		m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
+			gl->glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
 
-		m_painter.end();
+			m_vao->release();
+			m_program->release();
+		}
+
+		{
+			m_paintContext->makeCurrent(this);
+
+			m_painter.begin(m_paintDevice.get());
+			m_painter.setWindow(0, 0, width(), height());
+
+			m_painter.setPen(Qt::white);
+			m_painter.setFont(QFont("Arial", 30));
+			m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
+
+			m_painter.end();
+		}
 
 	}, "render", createColor(255, 0, 0, 255));
 
@@ -351,14 +361,14 @@ MainWindow::MainWindow()
 			tasks.reserve(imageCnt);
 			for (unsigned int i = 0; i < imageCnt; i++)
 			{
-				tasks.push_back(createTask([this, i, imageSize]
+				tasks.emplace_back(createTask([this, i, imageSize]
 				{
 					mandel(0, imageSize, imageSize, 0, imageSize, imageSize, m_images[i].get());
 					return i;
 				}, launcher, std::string("mandel") + std::to_string(i), createColor(0, j ? 0 : i*(256 / imageCnt), j ? i*(256 / imageCnt) : 0, 255)));
 			}
 
-			branches.push_back(join(tasks)->then([](std::vector<unsigned int> vals)
+			branches.emplace_back(join(tasks)->then([](std::vector<unsigned int> vals)
 			{
 				return std::accumulate(vals.begin(), vals.end(), 0U);
 			}, std::string("accumulate") + std::to_string(j), createColor(0, 128, 128, 255)));
@@ -372,6 +382,7 @@ MainWindow::MainWindow()
 
 	m_swap = createTask([this]
 	{
+		m_context->makeCurrent(this);
 		m_context->swapBuffers(this);
 	}, "swap", createColor(255, 255, 0, 255));
 }
@@ -384,10 +395,12 @@ void MainWindow::render()
 {
 	m_lastFrameStart = m_frameStart;
 	m_frameStart = HighResClock::now();
-	m_lastFrameCollector = m_collectors[m_frameIndex % 2];
+	
 	++m_frameIndex;
-	m_collectors[m_frameIndex % 2]->clear();
-	m_scheduler.setTimeIntervalCollector(m_collectors[m_frameIndex % 2]);
+
+	auto& collector = m_collectors[m_frameIndex % m_collectors.size()];
+	collector->clear();
+	m_scheduler.setTimeIntervalCollector(collector);
 
 	m_scheduler.dispatch(m_createWork);
 	m_scheduler.run(m_renderDataPrepare);
