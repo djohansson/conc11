@@ -29,9 +29,10 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	Q_ASSERT(m_context);
 	
 	m_glFunctions = m_context->versionFunctions<QOpenGLFunctions_4_3_Core>();
-	m_glFunctions->initializeOpenGLFunctions();
 	
 	Q_ASSERT(m_glFunctions);
+
+	m_glFunctions->initializeOpenGLFunctions();
 
 	format.setVersion(2, 1);
 	
