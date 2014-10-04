@@ -10,7 +10,6 @@
 #include <QtGui/QPaintEngine>
 #include <QtGui/QScreen>
 
-#include <conc11/Task.h>
 #include <conc11/TaskScheduler.h>
 #include <conc11/TaskUtils.h>
 #include <conc11/TimeIntervalCollector.h>
@@ -134,7 +133,7 @@ MainWindow::MainWindow()
 	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, g_fragmentShaderSource);
 	m_program->link();
 	
-	auto gl = gl43();
+	auto gl = getGl();
 	Q_ASSERT(gl);
 	gl->glReleaseShaderCompiler();
 	
@@ -149,7 +148,7 @@ MainWindow::MainWindow()
 	m_positionBuffer.create();
 	m_positionBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_positionBuffer.bind();
-	m_positionBuffer.allocate(16*1024 * 2 * sizeof(float));
+	m_positionBuffer.allocate(128*1024 * 2 * sizeof(float));
 	m_program->enableAttributeArray(m_posAttr);
 	m_program->setAttributeBuffer(m_posAttr, GL_FLOAT, 0, 2);
 	m_positionBuffer.release();
@@ -157,7 +156,7 @@ MainWindow::MainWindow()
 	m_colorBuffer.create();
 	m_colorBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_colorBuffer.bind();
-	m_colorBuffer.allocate(16*1024 * sizeof(Color::StoreType));
+	m_colorBuffer.allocate(128*1024 * sizeof(Color::StoreType));
 	m_program->enableAttributeArray(m_colAttr);
 	m_program->setAttributeBuffer(m_colAttr, GL_UNSIGNED_BYTE, 0, 4);
 	m_colorBuffer.release();
@@ -191,8 +190,9 @@ MainWindow::MainWindow()
 	for (const auto& t : threads)
 		m_threadIds.push_back(t.get().get_id());
 
-	const unsigned int imageSize = 128;
-	const unsigned int imageCnt = 64;
+	const unsigned int imageSize = 64;
+	const unsigned int imageCnt = 32;
+    const unsigned int branchCnt = 16;
 	for (unsigned int i = 0; i < imageCnt; i++)
 		m_images.emplace_back(std::unique_ptr<unsigned>(new unsigned[imageSize*imageSize]));
 
@@ -315,7 +315,7 @@ MainWindow::MainWindow()
 
 		{
 			m_context->makeCurrent(this);
-			auto gl = gl43();
+			auto gl = getGl();
 			Q_ASSERT(gl);
 
 			gl->glClearColor(0, 0, 0.3f, 0);
@@ -350,35 +350,36 @@ MainWindow::MainWindow()
 
 	}, "render", createColor(255, 0, 0, 255));
 
-	m_createWork = createTask([this, imageSize, imageCnt]
+	m_createWork = createTask([this, imageSize, imageCnt, branchCnt]
 	{
-		TaskGroup branches;
+        auto branches = UntypedTaskGroup::create();
+        branches->reserve(branchCnt);
 		auto launcher = createTask([]{}, "launcher", createColor(255, 255, 255, 255));
 
-		for (unsigned int j = 0; j < 2; j++)
+		for (unsigned int j = 0; j < branchCnt; j++)
 		{
-			TypedTaskGroup<unsigned int> tasks;
-			tasks.reserve(imageCnt);
+            auto tasks = UntypedTaskGroup::create();
+			tasks->reserve(imageCnt);
 			for (unsigned int i = 0; i < imageCnt; i++)
 			{
-				tasks.emplace_back(createTask([this, i, imageSize]
+				tasks->emplace_back(createTask([this, i, imageSize]
 				{
 					mandel(0, imageSize, imageSize, 0, imageSize, imageSize, m_images[i].get());
 					return i;
 				}, launcher, std::string("mandel") + std::to_string(i), createColor(0, j ? 0 : i*(256 / imageCnt), j ? i*(256 / imageCnt) : 0, 255)));
 			}
 
-			branches.emplace_back(join(tasks)->then([](std::vector<unsigned int> vals)
+            branches->emplace_back(join(tasks)->then([]
 			{
-				return std::accumulate(vals.begin(), vals.end(), 0U);
-			}, std::string("accumulate") + std::to_string(j), createColor(0, 128, 128, 255)));
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+			}, std::string("sleep") + std::to_string(j), createColor(0, 128, 128, 255)));
 		}
 
 		m_workDone = join(branches);
 
 		m_scheduler.dispatch(launcher);
 
-	}, "createWork", createColor(128, 128, 128, 255));
+	}, "createWork", createColor(255, 255, 255, 255));
 
 	m_swap = createTask([this]
 	{

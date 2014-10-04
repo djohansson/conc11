@@ -11,6 +11,7 @@
 #include <future>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -36,21 +37,96 @@ enum TaskPriority
 	
 	TpCount
 };
-
-struct TaskBase /*abstract*/
+    
+class TaskBase
 {
-	virtual void operator()(const TaskScheduler& scheduler) = 0;
-	virtual TaskStatus getStatus() const = 0;
-	virtual TaskPriority getPriority() const = 0;
-	virtual void setPriority(TaskPriority p) const = 0;
-	virtual void setStatus(TaskStatus s) const = 0;
-	virtual void wait() const = 0;
-	virtual void reset() = 0;
+    friend class TaskScheduler;
+    
+public:
+    
+    virtual void operator()(const TaskScheduler& scheduler) = 0;
+    virtual void wait() const = 0;
+    virtual void reset() = 0;
+    
+    inline TaskStatus getStatus() const
+    {
+        return m_status;
+    }
+    
+    inline TaskPriority getPriority() const
+    {
+        return m_priority;
+    }
 	
-	// todo: hide these
-	virtual void addDependency() const = 0;
-	virtual bool releaseDependency() const = 0;
-	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) = 0;
+	inline const std::string& getName() const { return m_name; }
+	inline void setName(std::string&& name) { m_name = std::forward<std::string>(name); }
+
+	inline Color getColor() const { return m_color; }
+	inline void setColor(Color&& color) { m_color = std::forward<Color>(color); }
+    
+    inline TimeInterval& interval() { return m_interval; }
+    
+    inline void addDependency() const
+    {
+        addWaitCount();
+    }
+    
+    inline bool releaseDependency() const
+    {
+        return releaseWaitCount();
+    }
+    
+protected:
+    
+    struct InitData
+    {
+        std::string name;
+        Color color;
+        TaskPriority priority;
+    };
+    
+    explicit TaskBase(InitData&& data)
+    : m_color(std::forward<Color>(data.color))
+    , m_name(std::forward<std::string>(data.name))
+    , m_status(TsUnscheduled)
+    , m_priority(std::forward<TaskPriority>(data.priority))
+    , m_waitCount(0)
+    { }
+    
+    inline std::vector<std::shared_ptr<TaskBase>>& waiters() { return m_waiters; }
+    
+    inline void setStatus(TaskStatus status) const
+    {
+        m_status = status;
+    }
+    
+    inline void setPriority(TaskPriority priority) const
+    {
+        m_priority = priority;
+    }
+    
+private:
+    
+    TaskBase(const TaskBase&) = delete;
+    TaskBase& operator=(const TaskBase&) = delete;
+    
+    inline void addWaitCount() const
+    {
+        m_waitCount++;
+    }
+    
+    inline bool releaseWaitCount() const
+    {
+        return (--m_waitCount == 0);
+    }
+	
+	Color m_color;
+	std::string m_name;
+    TimeInterval m_interval;
+    std::vector<std::shared_ptr<TaskBase>> m_waiters;
+    mutable std::atomic<TaskStatus> m_status;
+    mutable std::atomic<TaskPriority> m_priority;
+    mutable std::atomic<uint32_t> m_waitCount;
 };
 
 template<typename T>
@@ -59,35 +135,29 @@ class Task : public TaskBase
 public:
 
 	typedef T ReturnType;
-
-	Task(TaskPriority&& priority, std::string&& name, Color&& color)
-		: m_color(std::forward<Color>(color))
-		, m_name(std::forward<std::string>(name))
-		, m_status(TsUnscheduled)
-		, m_priority(std::forward<TaskPriority>(priority))
-		, m_waitCount(0)
-	{
-		reset();
-	}
+    
+    explicit Task(InitData&& data)
+    : TaskBase(std::forward<InitData>(data))
+   	{
+        reset();
+    }
+    
+    static auto create(TaskPriority&& priority, std::string&& name, Color&& color)
+    {
+        return std::make_shared<Task<ReturnType>>(InitData{
+                                                     std::forward<std::string>(name),
+                                                     std::forward<Color>(color),
+                                                     std::forward<TaskPriority>(priority)});
+    }
 
 	virtual ~Task()
 	{ }
 	
 	virtual void operator()(const TaskScheduler& scheduler) final;
 	
-	virtual TaskStatus getStatus() const final
-	{
-		return m_status;
-	}
-	
-	virtual TaskPriority getPriority() const final
-	{
-		return m_priority;
-	}
-	
 	virtual void wait() const final
 	{
-		assert(m_status != TsUnscheduled);
+		assert(getStatus() != TsUnscheduled);
 		m_future.wait();
 	}
 
@@ -96,24 +166,8 @@ public:
 		m_promise = std::make_shared<std::promise<ReturnType>>();
 		m_future = m_promise->get_future().share();
 
-		for (auto w : m_waiters)
+		for (auto w : waiters())
 			w->addDependency();
-	}
-
-	virtual void addDependency() const final
-	{
-		addWaitCount();
-	}
-
-	virtual bool releaseDependency() const final
-	{
-		return releaseWaitCount();
-	}
-	
-	virtual void addWaiter(const std::shared_ptr<TaskBase>& waiter) final
-	{
-		waiter->setStatus(TsPending);
-		m_waiters.push_back(waiter);
 	}
 
 	inline const std::function<TaskStatus()>& getFunction() const
@@ -141,19 +195,13 @@ public:
 		return m_future;
 	}
 
-	inline const std::string& getName() const { return m_name; }
-	inline void setName(std::string&& name) { m_name = std::forward<std::string>(name); }
-
-	inline Color getColor() const { return m_color; }
-	inline void setColor(Color&& color) { m_color = std::forward<Color>(color); }
-
 	template<typename Func>
-	std::shared_ptr<Task<typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type>> then(Func f, std::string&& name = "", Color&& color = Color())
+	auto then(Func f, std::string&& name = "", Color&& color = Color())
 	{
 		typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ThenReturnType;
 
-		auto t = std::make_shared<Task<ThenReturnType>>(TpHigh, std::forward<std::string>(name), std::forward<Color>(color));
-		Task<ThenReturnType>& tref = *t;
+        auto t = Task<ThenReturnType>::create(TpHigh, std::forward<std::string>(name), std::forward<Color>(color));
+		auto& tref = *t;
 		auto tf = std::function<TaskStatus()>([this, &tref, f]
 		{
 			trySetFuncResult(*tref.getPromise(), f, m_future,
@@ -166,86 +214,53 @@ public:
 		t->moveFunction(std::move(tf));
 		
 		t->addDependency();
-		addWaiter(t);
+        t->setStatus(TsPending);
+        waiters().push_back(t);
 		
 		return t;
 	}
-
+    
 private:
 
-	Task(const Task&);
-	Task& operator=(const Task&);
-	
-	virtual void setStatus(TaskStatus status) const final
-	{
-		m_status = status;
-	}
-	
-	virtual void setPriority(TaskPriority priority) const final
-	{
-		m_priority = priority;
-	}
-	
-	inline void addWaitCount() const
-	{
-		m_waitCount++;
-	}
-
-	inline bool releaseWaitCount() const
-	{
-		return (--m_waitCount == 0);
-	}
-
-	TimeInterval m_interval;
-	Color m_color;
-	std::string m_name;
 	std::function<TaskStatus()> m_function;
 	std::shared_ptr<std::promise<ReturnType>> m_promise;
 	std::shared_future<ReturnType> m_future;
-	std::vector<std::shared_ptr<TaskBase>> m_waiters;
-	mutable std::atomic<TaskStatus> m_status;
-	mutable std::atomic<TaskPriority> m_priority;
-	mutable std::atomic<uint32_t> m_waitCount;
-};
-	
-class TaskGroupBase
-{
-public:
-		
-	TaskGroupBase(std::string&& name, Color&& color)
-	: m_color(std::forward<Color>(color))
-	, m_name(std::forward<std::string>(name))
-	{ }
-	
-	inline const std::string& getName() const { return m_name; }
-	inline void setName(std::string&& name) { m_name = std::forward<std::string>(name); }
-
-	inline Color getColor() const { return m_color; }
-	inline void setColor(Color&& color) { m_color = std::forward<Color>(color); }
-
-protected:
-	
-	Color m_color;
-	std::string m_name;
 };
 
-class TaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<TaskBase>>
+class UntypedTaskGroup : public Task<UnitType>, public std::vector<std::shared_ptr<TaskBase>>
 {
+    typedef std::vector<std::shared_ptr<TaskBase>> TaskContainer;
+    struct InitData {};
+   
 public:
-	
-	TaskGroup()
-	: TaskGroupBase("TaskGroup", createColor(128, 128, 128, 255))
-	{ }
+    
+    explicit UntypedTaskGroup(InitData&& /*data*/)
+    : Task<UnitType>(TaskBase::InitData{"UntypedTaskGroup", createColor(128, 128, 128, 255), TpNormal})
+    { }
+    
+    static auto create()
+    {
+        return std::make_shared<UntypedTaskGroup>(InitData{});
+    }
 };
 
-template <typename T>
-class TypedTaskGroup : public TaskGroupBase, public std::vector<std::shared_ptr<Task<T>>>
+template <typename T, typename... Args>
+class TypedTaskGroup : public Task<UnitType>, public std::tuple<std::shared_ptr<Task<T>>, std::shared_ptr<Task<Args>>...>
 {
+    typedef std::tuple<std::shared_ptr<Task<T>>, std::shared_ptr<Task<Args>>...> TaskContainer;
+    struct InitData {};
+
 public:
-	
-	TypedTaskGroup()
-	: TaskGroupBase("TypedTaskGroup", createColor(128, 128, 128, 255))
-	{ }
+    
+    explicit TypedTaskGroup(InitData&& /*data*/, const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn)
+    : Task<UnitType>(TaskBase::InitData{"TypedTaskGroup", createColor(128, 128, 128, 255), TpNormal})
+    , TaskContainer(f0, fn...)
+    { }
+    
+    static auto create(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn)
+    {
+        return std::make_shared<TypedTaskGroup<T, Args...>>(InitData{}, f0, fn...);
+    }
 };
 
 

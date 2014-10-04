@@ -1,5 +1,6 @@
 #include "openglwindow.h"
 
+#include <QtCore/QtCore>
 #include <QtCore/QCoreApplication>
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLPaintDevice>
@@ -14,7 +15,7 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	QSurfaceFormat format = requestedFormat();
 	format.setRenderableType(QSurfaceFormat::OpenGL);
 	format.setOption(QSurfaceFormat::DebugContext);
-	format.setVersion(4, 3);
+	format.setVersion(4, 1);
 	format.setProfile(QSurfaceFormat::CoreProfile);
 
 	setSurfaceType(QWindow::OpenGLSurface);
@@ -28,7 +29,7 @@ OpenGLWindow::OpenGLWindow(QWindow* parent)
 	
 	Q_ASSERT(m_context);
 	
-	m_glFunctions = m_context->versionFunctions<QOpenGLFunctions_4_3_Core>();
+	m_glFunctions = m_context->versionFunctions<QOpenGLFunctions_4_1_Core>();
 	
 	Q_ASSERT(m_glFunctions);
 

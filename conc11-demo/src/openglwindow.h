@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QtGui/QWindow>
-#include <QtGui/QOpenGLFunctions_4_3_Core>
+#include <QtGui/QOpenGLFunctions_4_1_Core>
 
 #include <memory>
 
@@ -36,7 +36,7 @@ protected:
 	void exposeEvent(QExposeEvent* event);
 	void resizeEvent(QResizeEvent* event);
 
-	inline QOpenGLFunctions_4_3_Core* gl43() const { return static_cast<QOpenGLFunctions_4_3_Core*>(m_glFunctions); }
+	inline QOpenGLFunctions_4_1_Core* getGl() const { return static_cast<QOpenGLFunctions_4_1_Core*>(m_glFunctions); }
 	
 	QAbstractOpenGLFunctions* m_glFunctions;
 	std::unique_ptr<QOpenGLContext> m_context;

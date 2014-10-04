@@ -4,7 +4,6 @@
 #include <framework/Thread.h>
 
 #include "Task.h"
-#include "TaskUtils.h"
 #include "TaskTypes.h"
 
 #include <atomic>
@@ -133,6 +132,104 @@ public:
 
 	inline const std::shared_ptr<TimeIntervalCollector>& getTimeIntervalCollector() const { return m_collector; }
 	inline void setTimeIntervalCollector(const std::shared_ptr<TimeIntervalCollector>& collector) { m_collector = collector; }
+    
+    static auto join(const std::shared_ptr<UntypedTaskGroup>& g)
+    {
+        g->setStatus(TsPending);
+        for (auto t : *g)
+        {
+            g->addDependency();
+            t->waiters().push_back(g);
+        }
+        
+        return g;
+    }
+    
+    /*
+    template <typename T, typename... Args>
+    static auto join(const TypedTaskGroup<T, Args...>& g)
+    {
+        typedef std::vector<T> ReturnType;
+        typedef std::vector<std::shared_future<T>> FutureContainer;
+        
+        FutureContainer fc;
+        fc.reserve(g.size());
+        for (auto i : g)
+            fc.push_back(i->getFuture());
+        
+        auto t = std::make_shared<Task<ReturnType>>(TpHigh, std::move(std::string("join").append(g.getName())), g.getColor());
+        auto& tref = *t;
+        auto tf = std::function<TaskStatus()>([&tref, fc]
+                                              {
+                                                  ReturnType ret;
+                                                  ret.reserve(fc.size());
+                                                  for (auto f : fc)
+                                                      ret.push_back(f.get());
+                                                  
+                                                  trySetResult(*tref.getPromise(), std::move(ret));
+                                                  
+                                                  return TsDone;
+                                              });
+        t->moveFunction(std::move(tf));
+        
+        for (auto i : g)
+        {
+            t->addDependency();
+            i->addWaiter(t);
+        }
+        
+        return g;
+    }
+     */
+    
+    template<typename T, typename... Args>
+    static auto join(const std::shared_ptr<TypedTaskGroup<T, Args...>>& g)
+    {
+        AddDependencyRecursive<(1+sizeof...(Args))>::invoke(*g);
+        
+        return g;
+    }
+    
+    template <typename Func, typename T, typename U>
+    static auto createTaskWithoutDependency(Func f, std::string&& name, Color&& color , T argIsVoid, U fIsVoid)
+    {
+        typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
+        
+        auto t = Task<ReturnType>::create(TpNormal, std::forward<std::string>(name), std::forward<Color>(color));
+        auto& tref = *t;
+        auto tf = std::function<TaskStatus()>([&tref, f, argIsVoid, fIsVoid]
+                                              {
+                                                  trySetFuncResult(*tref.getPromise(), f, std::shared_future<UnitType>(), argIsVoid, fIsVoid, std::false_type());
+                                                  
+                                                  return TsDone;
+                                              });
+        t->moveFunction(std::move(tf));
+        
+        return t;
+    }
+    
+    template <typename Func, typename T, typename U, typename V, typename X>
+    static auto createTaskWithDependency(Func f, const std::shared_ptr<Task<T>>& dependency, std::string&& name, Color&& color, U argIsVoid, V fIsVoid, X argIsAssignable)
+    {
+        typedef typename VoidToUnitType<typename FunctionTraits<Func>::ReturnType>::Type ReturnType;
+        
+        auto t = Task<ReturnType>::create(TpNormal, std::forward<std::string>(name), std::forward<Color>(color));
+        auto& tref = *t;
+        auto depFuture = dependency->getFuture();
+        auto tf = std::function<TaskStatus()>([&tref, f, depFuture, argIsVoid, fIsVoid, argIsAssignable]
+                                              {
+                                                  trySetFuncResult(*tref.getPromise(), f, depFuture, argIsVoid, fIsVoid, argIsAssignable);
+                                                  
+                                                  return TsDone;
+                                              });
+        t->moveFunction(std::move(tf));
+        
+        t->addDependency();
+        t->setStatus(TsPending);
+        dependency->waiters().push_back(t);
+
+        return t;
+    }
 
 private:
 	
@@ -191,7 +288,7 @@ private:
 		wakeThreads(1);
 	}
 	
-	void schedule(const TaskGroup& g) const
+	void schedule(const UntypedTaskGroup& g) const
 	{
 		assert(g.size() > 0);
 		
@@ -235,7 +332,7 @@ private:
 		else
 			wakeThreads(static_cast<unsigned int>(g.size()));
 	}
-
+    
 	TaskScheduler(const TaskScheduler&);
 	TaskScheduler& operator=(const TaskScheduler&);
 
@@ -257,23 +354,26 @@ private:
 template <typename T>
 void Task<T>::operator()(const TaskScheduler& scheduler)
 {
-	assert(m_function);
-	
+	if (m_function)
 	{
-		ScopedTimeInterval scope(m_interval, m_color, scheduler.getTimeIntervalCollector());		
+		ScopedTimeInterval scope(interval(), getColor(), scheduler.getTimeIntervalCollector());
 		setStatus(m_function());
 	}
+    else
+    {
+        setStatus(TsDone);
+    }
 	
 	assert(getStatus() == TsDone);
 	
-	if (m_waiters.size() > 0)
+	if (waiters().size() > 0)
 	{
-		for (unsigned int i = 1; i < m_waiters.size(); i++)
-			if (m_waiters[i]->releaseDependency())
-				scheduler.dispatch(m_waiters[i]);
+		for (unsigned int i = 1; i < waiters().size(); i++)
+			if (waiters()[i]->releaseDependency())
+				scheduler.dispatch(waiters()[i]);
 		
-		if (m_waiters[0]->releaseDependency())
-			scheduler.run(m_waiters[0]);
+		if (waiters()[0]->releaseDependency())
+			scheduler.run(waiters()[0]);
 	}
 }
 
