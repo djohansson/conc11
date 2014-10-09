@@ -76,6 +76,8 @@ public:
 		// signal threads to exit
 		m_running = false;
 		wakeAllThreads();
+        
+        assert(TaskBase::s_instanceCount == 0);
 	}
 
     inline const std::vector<Thread>& getThreads() const
@@ -103,31 +105,27 @@ public:
 	}
 
 	// join in on task queue, returning once task t has finished
-	void waitJoin(const std::shared_ptr<TaskBase>& t) const
+	void processQueueUntil(const std::shared_ptr<TaskBase>& t) const
     {
-		if (t.get() != nullptr && t->getStatus() == TsPending)
-		{
-			std::shared_ptr<TaskBase> qt;
-			while (true)
-			{
-				for (auto& q : m_queues)
-				{
-					while (q.try_pop(qt))
-					{
-						assert(qt.get() != nullptr);
-						(*qt)(*this);
-						
-						if (t->getStatus() == TsDone)
-							return;
-					}
-					
-					if (t->getStatus() == TsDone)
-						return;
-				}
-				
-				std::this_thread::yield();
-			}
-		}
+        assert(t.get() != nullptr);
+        
+        std::shared_ptr<TaskBase> qt;
+        while (t->getStatus() != TsDone)
+        {
+            for (auto& q : m_queues)
+            {
+                while (q.try_pop(qt))
+                {
+                    assert(qt.get() != nullptr);
+                    (*qt)(*this);
+                    
+                    if (t->getStatus() == TsDone)
+                        return;
+                }
+            }
+            
+            std::this_thread::yield();
+        }
 	}
 
 	inline const std::shared_ptr<TimeIntervalCollector>& getTimeIntervalCollector() const { return m_collector; }
@@ -135,7 +133,14 @@ public:
     
     static auto join(const std::shared_ptr<UntypedTaskGroup>& g)
     {
-        g->setStatus(TsPending);
+        auto& gref = *g;
+        auto gf = std::function<TaskStatus()>([&gref]
+                                              {
+                                                  gref.clear();
+                                                  return TsDone;
+                                              });
+        g->moveFunction(std::move(gf));
+        
         for (auto t : *g)
         {
             g->addDependency();
@@ -180,7 +185,6 @@ public:
         
         return g;
     }
-     */
     
     template<typename T, typename... Args>
     static auto join(const std::shared_ptr<TypedTaskGroup<T, Args...>>& g)
@@ -189,6 +193,7 @@ public:
         
         return g;
     }
+     */
     
     template <typename Func, typename T, typename U>
     static auto createTaskWithoutDependency(Func f, std::string&& name, Color&& color , T argIsVoid, U fIsVoid)
@@ -225,7 +230,6 @@ public:
         t->moveFunction(std::move(tf));
         
         t->addDependency();
-        t->setStatus(TsPending);
         dependency->waiters().push_back(t);
 
         return t;
@@ -354,15 +358,17 @@ private:
 template <typename T>
 void Task<T>::operator()(const TaskScheduler& scheduler)
 {
-	if (m_function)
+    assert(m_function != nullptr);
+    
+	//if (m_function)
 	{
 		ScopedTimeInterval scope(interval(), getColor(), scheduler.getTimeIntervalCollector());
 		setStatus(m_function());
 	}
-    else
-    {
-        setStatus(TsDone);
-    }
+    //else
+    //{
+    //  setStatus(TsDone);
+    //}
 	
 	assert(getStatus() == TsDone);
 	

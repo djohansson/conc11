@@ -44,6 +44,11 @@ class TaskBase
     
 public:
     
+    virtual ~TaskBase()
+    {
+        s_instanceCount--;
+    }
+    
     virtual void operator()(const TaskScheduler& scheduler) = 0;
     virtual void wait() const = 0;
     virtual void reset() = 0;
@@ -56,6 +61,11 @@ public:
     inline TaskPriority getPriority() const
     {
         return m_priority;
+    }
+    
+    inline void setPriority(TaskPriority priority) const
+    {
+        m_priority = priority;
     }
 	
 	inline const std::string& getName() const { return m_name; }
@@ -91,18 +101,15 @@ protected:
     , m_status(TsUnscheduled)
     , m_priority(std::forward<TaskPriority>(data.priority))
     , m_waitCount(0)
-    { }
+    {
+        s_instanceCount++;
+    }
     
     inline std::vector<std::shared_ptr<TaskBase>>& waiters() { return m_waiters; }
     
     inline void setStatus(TaskStatus status) const
     {
         m_status = status;
-    }
-    
-    inline void setPriority(TaskPriority priority) const
-    {
-        m_priority = priority;
     }
     
 private:
@@ -127,6 +134,7 @@ private:
     mutable std::atomic<TaskStatus> m_status;
     mutable std::atomic<TaskPriority> m_priority;
     mutable std::atomic<uint32_t> m_waitCount;
+    static std::atomic<uint32_t> s_instanceCount;
 };
 
 template<typename T>
@@ -212,9 +220,8 @@ public:
 			return TsDone;
 		});
 		t->moveFunction(std::move(tf));
-		
+        
 		t->addDependency();
-        t->setStatus(TsPending);
         waiters().push_back(t);
 		
 		return t;
@@ -238,6 +245,9 @@ public:
     : Task<UnitType>(TaskBase::InitData{"UntypedTaskGroup", createColor(128, 128, 128, 255), TpNormal})
     { }
     
+    virtual ~UntypedTaskGroup()
+    { }
+    
     static auto create()
     {
         return std::make_shared<UntypedTaskGroup>(InitData{});
@@ -255,6 +265,9 @@ public:
     explicit TypedTaskGroup(InitData&& /*data*/, const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn)
     : Task<UnitType>(TaskBase::InitData{"TypedTaskGroup", createColor(128, 128, 128, 255), TpNormal})
     , TaskContainer(f0, fn...)
+    { }
+    
+    virtual ~TypedTaskGroup()
     { }
     
     static auto create(const std::shared_ptr<Task<T>>& f0, const std::shared_ptr<Task<Args>>&... fn)

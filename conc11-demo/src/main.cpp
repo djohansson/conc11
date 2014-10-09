@@ -22,6 +22,8 @@
 
 using namespace conc11;
 
+std::atomic<uint32_t> TaskBase::s_instanceCount(0);
+
 static const char* g_vertexShaderSource =
 R"(#version 150
 in highp vec4 posAttr;
@@ -96,7 +98,7 @@ private:
 	std::vector<std::thread::id> m_threadIds;
 	std::vector<std::unique_ptr<unsigned>> m_images;
 
-	std::shared_ptr<TaskBase> m_renderDataPrepare;
+	std::shared_ptr<TaskBase> m_renderDataUpdate;
 	std::shared_ptr<TaskBase> m_createWork;
 	std::shared_ptr<TaskBase> m_workDone;
 	std::shared_ptr<TaskBase> m_render;
@@ -115,7 +117,7 @@ private:
 	
 	QPainter m_painter;
 
-	unsigned int m_frameIndex;
+    std::atomic<uint32_t> m_frameIndex;
 };
 
 MainWindow::MainWindow()
@@ -148,7 +150,7 @@ MainWindow::MainWindow()
 	m_positionBuffer.create();
 	m_positionBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_positionBuffer.bind();
-	m_positionBuffer.allocate(128*1024 * 2 * sizeof(float));
+	m_positionBuffer.allocate(16*1024 * 2 * sizeof(float));
 	m_program->enableAttributeArray(m_posAttr);
 	m_program->setAttributeBuffer(m_posAttr, GL_FLOAT, 0, 2);
 	m_positionBuffer.release();
@@ -156,7 +158,7 @@ MainWindow::MainWindow()
 	m_colorBuffer.create();
 	m_colorBuffer.setUsagePattern(QOpenGLBuffer::StreamDraw);
 	m_colorBuffer.bind();
-	m_colorBuffer.allocate(128*1024 * sizeof(Color::StoreType));
+	m_colorBuffer.allocate(16*1024 * sizeof(Color::StoreType));
 	m_program->enableAttributeArray(m_colAttr);
 	m_program->setAttributeBuffer(m_colAttr, GL_UNSIGNED_BYTE, 0, 4);
 	m_colorBuffer.release();
@@ -202,7 +204,7 @@ MainWindow::MainWindow()
 	
 	m_frameStart = HighResClock::now();
 
-	m_renderDataPrepare = createTask([this]
+	m_renderDataUpdate = createTask([this]
 	{
 		m_context->makeCurrent(this);
 
@@ -213,105 +215,110 @@ MainWindow::MainWindow()
 		
 		Q_ASSERT(positions);
 		Q_ASSERT(colors);
-		
-		unsigned int pi = 0;
-		unsigned int ci = 0;
-		
-		{
-			static const Color c0 = createColor(0, 64, 0, 64);
-			
-			positions[pi++] = -1;
-			positions[pi++] = -1;
-			colors[ci++] = c0.getStore();
-			
-			positions[pi++] = -1;
-			positions[pi++] = 1;
-			colors[ci++] = c0.getStore();
-			
-			positions[pi++] = 1;
-			positions[pi++] = -1;
-			colors[ci++] = c0.getStore();
-			
-			positions[pi++] = -1;
-			positions[pi++] = 1;
-			colors[ci++] = c0.getStore();
-			
-			positions[pi++] = 1;
-			positions[pi++] = -1;
-			colors[ci++] = c0.getStore();
-			
-			positions[pi++] = 1;
-			positions[pi++] = 1;
-			colors[ci++] = c0.getStore();
-		}
-		
-		float fx = 2.0f / (m_collectors.size() - 1);
-		float dy = 2.0f / m_threadIds.size();
-		float sy = 0.95f * dy;
-		for (unsigned int i = 1; i < static_cast<unsigned int>(m_collectors.size()); ++i)
-		{
-			const TimeIntervalCollector::ContainerType& intervals = m_collectors[(m_frameIndex - i) % m_collectors.size()]->getIntervals();
-			unsigned int threadIndex = 0;
-			for (auto& threadId : m_threadIds)
-			{
-				auto ip = intervals.equal_range(threadId);
-				for (auto it = ip.first; it != ip.second; it++)
-				{
-					auto& ti = (*it).second;
-					const Color& c = ti.color;
+        
+        unsigned int pi = 0;
+        unsigned int ci = 0;
+        
+        auto writeData = createTask([this, &positions, &colors, &pi, &ci]
+        {
+            {
+                static const Color c0 = createColor(0, 64, 0, 64);
+                
+                positions[pi++] = -1;
+                positions[pi++] = -1;
+                colors[ci++] = c0.getStore();
+                
+                positions[pi++] = -1;
+                positions[pi++] = 1;
+                colors[ci++] = c0.getStore();
+                
+                positions[pi++] = 1;
+                positions[pi++] = -1;
+                colors[ci++] = c0.getStore();
+                
+                positions[pi++] = -1;
+                positions[pi++] = 1;
+                colors[ci++] = c0.getStore();
+                
+                positions[pi++] = 1;
+                positions[pi++] = -1;
+                colors[ci++] = c0.getStore();
+                
+                positions[pi++] = 1;
+                positions[pi++] = 1;
+                colors[ci++] = c0.getStore();
+            }
+            
+            float fx = 2.0f / (m_collectors.size() - 1);
+            float dy = 2.0f / m_threadIds.size();
+            float sy = 0.95f * dy;
+            for (unsigned int i = 1; i < static_cast<unsigned int>(m_collectors.size()); ++i)
+            {
+                const TimeIntervalCollector::ContainerType& intervals = m_collectors[(m_frameIndex - i) % m_collectors.size()]->getIntervals();
+                unsigned int threadIndex = 0;
+                for (auto& threadId : m_threadIds)
+                {
+                    auto ip = intervals.equal_range(threadId);
+                    for (auto it = ip.first; it != ip.second; it++)
+                    {
+                        auto& ti = (*it).second;
+                        const Color& c = ti.color;
 
-					auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
-					auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
+                        auto start = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.start - m_lastFrameStart).count();
+                        auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(ti.end - ti.start).count();
 
-					static float apa = 64.0f;
-					float scaleX = (apa / (m_collectors.size() - 1)) / 1e9f;
-					float x = -1 + fx * (i - 1) + scaleX * static_cast<float>(start);
-					float y = -1 + (threadIndex * dy);
-					float sx = scaleX * static_cast<float>(duration);
+                        static float apa = 64.0f;
+                        float scaleX = (apa / (m_collectors.size() - 1)) / 1e9f;
+                        float x = -1 + fx * (i - 1) + scaleX * static_cast<float>(start);
+                        float y = -1 + (threadIndex * dy);
+                        float sx = scaleX * static_cast<float>(duration);
 
-					positions[pi++] = x;
-					positions[pi++] = y;
-					colors[ci++] = c.getStore();
+                        positions[pi++] = x;
+                        positions[pi++] = y;
+                        colors[ci++] = c.getStore();
 
-					positions[pi++] = x;
-					positions[pi++] = y + sy;
-					colors[ci++] = c.getStore();
+                        positions[pi++] = x;
+                        positions[pi++] = y + sy;
+                        colors[ci++] = c.getStore();
 
-					positions[pi++] = x + sx;
-					positions[pi++] = y;
-					colors[ci++] = c.getStore();
+                        positions[pi++] = x + sx;
+                        positions[pi++] = y;
+                        colors[ci++] = c.getStore();
 
-					positions[pi++] = x;
-					positions[pi++] = y + sy;
-					colors[ci++] = c.getStore();
+                        positions[pi++] = x;
+                        positions[pi++] = y + sy;
+                        colors[ci++] = c.getStore();
 
-					positions[pi++] = x + sx;
-					positions[pi++] = y;
-					colors[ci++] = c.getStore();
+                        positions[pi++] = x + sx;
+                        positions[pi++] = y;
+                        colors[ci++] = c.getStore();
 
-					positions[pi++] = x + sx;
-					positions[pi++] = y + sy;
-					colors[ci++] = c.getStore();
-				}
+                        positions[pi++] = x + sx;
+                        positions[pi++] = y + sy;
+                        colors[ci++] = c.getStore();
+                    }
 
-				threadIndex++;
-			}
-		}
-
-		assert(pi < m_positionBuffer.size() / (2 * sizeof(float)));
-		assert(ci < m_colorBuffer.size() / sizeof(Color::StoreType));
+                    threadIndex++;
+                }
+            }
+        }, "writeData", createColor(128, 255, 128, 255));
+        
+        m_scheduler.run(writeData);
+        
+        assert(pi < m_positionBuffer.size() / (2 * sizeof(float)));
+        assert(ci < m_colorBuffer.size() / sizeof(Color::StoreType));
 		
 		m_positionBuffer.bind();
 		m_positionBuffer.unmap();
 		m_colorBuffer.bind();
 		m_colorBuffer.unmap();
 		
-	}, "renderDataPrepare", createColor(255, 128, 128, 255));
+	}, "renderDataMap", createColor(255, 128, 128, 255));
 
 	m_render = createTask([this]
 	{
-		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
-		auto fps = 1e9 / double(dt);
+		//auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
+		//auto fps = 1e9 / double(dt);
 
 		{
 			m_context->makeCurrent(this);
@@ -335,18 +342,18 @@ MainWindow::MainWindow()
 			m_program->release();
 		}
 
-		{
-			m_paintContext->makeCurrent(this);
-
-			m_painter.begin(m_paintDevice.get());
-			m_painter.setWindow(0, 0, width(), height());
-
-			m_painter.setPen(Qt::white);
-			m_painter.setFont(QFont("Arial", 30));
-			m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
-
-			m_painter.end();
-		}
+//		{
+//			m_paintContext->makeCurrent(this);
+//
+//			m_painter.begin(m_paintDevice.get());
+//			m_painter.setWindow(0, 0, width(), height());
+//
+//			m_painter.setPen(Qt::white);
+//			m_painter.setFont(QFont("Arial", 30));
+//			m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
+//
+//			m_painter.end();
+//		}
 
 	}, "render", createColor(255, 0, 0, 255));
 
@@ -371,20 +378,20 @@ MainWindow::MainWindow()
 
             branches->emplace_back(join(tasks)->then([]
 			{
-                std::this_thread::sleep_for(std::chrono::microseconds(200));
+                std::this_thread::sleep_for(std::chrono::microseconds(3000));
 			}, std::string("sleep") + std::to_string(j), createColor(0, 128, 128, 255)));
 		}
 
 		m_workDone = join(branches);
-
 		m_scheduler.dispatch(launcher);
-
+        
 	}, "createWork", createColor(255, 255, 255, 255));
 
 	m_swap = createTask([this]
 	{
 		m_context->makeCurrent(this);
 		m_context->swapBuffers(this);
+        
 	}, "swap", createColor(255, 255, 0, 255));
 }
 
@@ -404,11 +411,11 @@ void MainWindow::render()
 	m_scheduler.setTimeIntervalCollector(collector);
 
 	m_scheduler.dispatch(m_createWork);
-	m_scheduler.run(m_renderDataPrepare);
+	m_scheduler.run(m_renderDataUpdate);
 	m_scheduler.run(m_render);
-	m_scheduler.waitJoin(m_createWork);
-	m_scheduler.waitJoin(m_workDone);
 	m_scheduler.run(m_swap);
+    m_scheduler.processQueueUntil(m_workDone);
+    m_scheduler.processQueueUntil(m_createWork);
 }
 
 int main(int argc, char **argv)

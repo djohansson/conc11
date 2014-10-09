@@ -40,8 +40,8 @@ protected:
 	
 	QAbstractOpenGLFunctions* m_glFunctions;
 	std::unique_ptr<QOpenGLContext> m_context;
-	std::unique_ptr<QOpenGLContext> m_paintContext;
-	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
+//	std::unique_ptr<QOpenGLContext> m_paintContext;
+//	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
 
 private:
 	
