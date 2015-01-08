@@ -1,14 +1,14 @@
 #pragma once
 
 #include <QtGui/QWindow>
-#include <QtGui/QOpenGLFunctions_4_1_Core>
+#include <QtGui/QOpenGLFunctions>
 
 #include <memory>
 
 class QOpenGLContext;
 class QOpenGLPaintDevice;
 
-class OpenGLWindow : public QWindow
+class OpenGLWindow : public QWindow, public QOpenGLFunctions
 {
 	Q_OBJECT
 	
@@ -35,13 +35,9 @@ protected:
 
 	void exposeEvent(QExposeEvent* event);
 	void resizeEvent(QResizeEvent* event);
-
-	inline QOpenGLFunctions_4_1_Core* getGl() const { return static_cast<QOpenGLFunctions_4_1_Core*>(m_glFunctions); }
 	
-	QAbstractOpenGLFunctions* m_glFunctions;
 	std::unique_ptr<QOpenGLContext> m_context;
-//	std::unique_ptr<QOpenGLContext> m_paintContext;
-//	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
+	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
 
 private:
 	

@@ -15,10 +15,3 @@ HEADERS += \
 SOURCES += \
 	src/main.cpp \
 	src/openglwindow.cpp
-
-win32 {
-LIBS += -L$$OUT_PWD/../local -lconc11-core
-}
-
-macx {
-}

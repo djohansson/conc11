@@ -1,7 +1,6 @@
 #pragma once
 
 #include <framework/Bitfields.h>
-#include <framework/HighResClock.h>
 
 #include <cassert>
 #include <chrono>
@@ -14,6 +13,9 @@
 
 namespace conc11
 {
+
+using HighResClock = std::chrono::high_resolution_clock;
+using HighResTimePointType = std::chrono::time_point<HighResClock>;
 	
 struct TimeInterval
 {

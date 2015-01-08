@@ -13,15 +13,6 @@ HEADERS += \
 	src/conc11/TimeIntervalCollector.h \
 	src/framework/Bitfields.h \
 	src/framework/FunctionTraits.h \
-	src/framework/HighResClock.h \
 	src/framework/MutexedQueue.h \
 	src/framework/Thread.h \
 	src/framework/TupleElement.h
-
-win32 {
-SOURCES += \
-	src/framework/HighResClock.cpp
-}
-
-macx {
-}

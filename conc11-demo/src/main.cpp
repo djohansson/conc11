@@ -13,7 +13,6 @@
 #include <conc11/TaskScheduler.h>
 #include <conc11/TaskUtils.h>
 #include <conc11/TimeIntervalCollector.h>
-#include <framework/HighResClock.h>
 
 #include <memory>
 #include <numeric>
@@ -25,7 +24,7 @@ using namespace conc11;
 std::atomic<uint32_t> TaskBase::s_instanceCount(0);
 
 static const char* g_vertexShaderSource =
-R"(#version 150
+R"(#version 300 es
 in highp vec4 posAttr;
 in lowp vec4 colAttr;
 out lowp vec4 col;
@@ -37,7 +36,7 @@ void main()
 })";
 
 static const char* g_fragmentShaderSource =
-R"(#version 150
+R"(#version 300 es
 in lowp vec4 col;
 out lowp vec4 fragColor;
 void main()
@@ -135,9 +134,7 @@ MainWindow::MainWindow()
 	m_program->addShaderFromSourceCode(QOpenGLShader::Fragment, g_fragmentShaderSource);
 	m_program->link();
 	
-	auto gl = getGl();
-	Q_ASSERT(gl);
-	gl->glReleaseShaderCompiler();
+	glReleaseShaderCompiler();
 	
 	m_posAttr = m_program->attributeLocation("posAttr");
 	m_colAttr = m_program->attributeLocation("colAttr");
@@ -317,17 +314,15 @@ MainWindow::MainWindow()
 
 	m_render = createTask([this]
 	{
-		//auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
-		//auto fps = 1e9 / double(dt);
+		auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(m_frameStart - m_lastFrameStart).count();
+		auto fps = 1e9 / double(dt);
 
 		{
 			m_context->makeCurrent(this);
-			auto gl = getGl();
-			Q_ASSERT(gl);
 
-			gl->glClearColor(0, 0, 0.3f, 0);
-			gl->glClear(GL_COLOR_BUFFER_BIT);
-			gl->glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
+			glClearColor(0, 0, 0.3f, 0);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glViewport(0, 0, width() * devicePixelRatio(), height() * devicePixelRatio());
 
 			m_program->bind();
 			m_vao->bind();
@@ -336,24 +331,42 @@ MainWindow::MainWindow()
 			matrix.ortho(-1, 1, -1, 1, -1, 1);
 			m_program->setUniformValue(m_matrixUniform, matrix);
 
-			gl->glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
+			//const GLfloat positions[] =
+			//{
+			//	0.0f, 0.5f,
+			//	-0.5f, -0.5f,
+			//	0.5f, -0.5f,
+			//};
+
+			//const GLubyte colors[] =
+			//{
+			//	255U, 0U, 0U, 255U,
+			//	0U, 255U, 0U, 255U,
+			//	0U, 0U, 255U, 255U,
+			//};
+
+			//glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, positions);
+			//glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_FALSE, 0, colors);
+			//glEnableVertexAttribArray(0);
+			//glEnableVertexAttribArray(1);
+			//glDrawArrays(GL_TRIANGLES, 0, 3);
+
+			glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m_positionBuffer.size() / 2);
 
 			m_vao->release();
 			m_program->release();
 		}
 
-//		{
-//			m_paintContext->makeCurrent(this);
-//
-//			m_painter.begin(m_paintDevice.get());
-//			m_painter.setWindow(0, 0, width(), height());
-//
-//			m_painter.setPen(Qt::white);
-//			m_painter.setFont(QFont("Arial", 30));
-//			m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
-//
-//			m_painter.end();
-//		}
+		//{
+		//	m_painter.begin(m_paintDevice.get());
+		//	m_painter.setWindow(0, 0, width(), height());
+
+		//	m_painter.setPen(Qt::white);
+		//	m_painter.setFont(QFont("Arial", 30));
+		//	m_painter.drawText(0, 0, 300, 60, Qt::AlignCenter, std::to_string(fps).c_str());
+
+		//	m_painter.end();
+		//}
 
 	}, "render", createColor(255, 0, 0, 255));
 
@@ -403,7 +416,7 @@ void MainWindow::render()
 {
 	m_lastFrameStart = m_frameStart;
 	m_frameStart = HighResClock::now();
-	
+
 	++m_frameIndex;
 
 	auto& collector = m_collectors[m_frameIndex % m_collectors.size()];
@@ -414,8 +427,8 @@ void MainWindow::render()
 	m_scheduler.run(m_renderDataUpdate);
 	m_scheduler.run(m_render);
 	m_scheduler.run(m_swap);
-    m_scheduler.processQueueUntil(m_workDone);
-    m_scheduler.processQueueUntil(m_createWork);
+	m_scheduler.processQueueUntil(m_createWork);
+	m_scheduler.processQueueUntil(m_workDone);
 }
 
 int main(int argc, char **argv)

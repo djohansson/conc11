@@ -70,3 +70,5 @@ local/*
 *.psess
 
 *.stash
+*.opensdf
+*.sdf
