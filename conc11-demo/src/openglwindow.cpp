@@ -3,37 +3,33 @@
 #include <QtCore/QtCore>
 #include <QtCore/QCoreApplication>
 #include <QtGui/QOpenGLContext>
-#include <QtGui/QOpenGLPaintDevice>
 
 OpenGLWindow::OpenGLWindow(QWindow* parent)
 : QWindow(parent), QOpenGLFunctions()
+, m_context(this)
 , m_renderEnable(true)
 , m_updatePending(false)
 , m_animating(false)
 {
 	QSurfaceFormat format = requestedFormat();
-	format.setRenderableType(QSurfaceFormat::OpenGLES);
+	format.setRenderableType(QSurfaceFormat::OpenGL);
+#ifdef _DEBUG
 	format.setOption(QSurfaceFormat::DebugContext);
-	format.setVersion(3, 0);
+#endif
+	format.setVersion(4, 1);
+	format.setSwapBehavior(QSurfaceFormat::TripleBuffer);
+	format.setSwapInterval(1);
 	format.setProfile(QSurfaceFormat::CoreProfile);
 
 	setSurfaceType(QWindow::OpenGLSurface);
 	setFormat(format);
 	create();
 	
-	m_context.reset(new QOpenGLContext(this));
-	m_context->setFormat(format);
-	m_context->create();
-	m_context->makeCurrent(this);
-	
-	Q_ASSERT(m_context);
+	m_context.setFormat(format);
+	m_context.create();
+	m_context.makeCurrent(this);
 	
 	initializeOpenGLFunctions();
-	
-//	m_paintDevice.reset(new QOpenGLPaintDevice(size()));
-//	m_paintDevice->setDevicePixelRatio(devicePixelRatio());
-	
-//	Q_ASSERT(m_paintDevice);
 }
 
 OpenGLWindow::~OpenGLWindow()
@@ -80,10 +76,8 @@ void OpenGLWindow::renderNow()
 
 	m_updatePending = false;
 
-	m_context->makeCurrent(this);
+	m_context.makeCurrent(this);
 	
-//	m_paintDevice->setSize(size());
-
 	render();
 
 	if (m_animating)

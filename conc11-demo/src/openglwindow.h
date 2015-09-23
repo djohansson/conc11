@@ -6,7 +6,6 @@
 #include <memory>
 
 class QOpenGLContext;
-class QOpenGLPaintDevice;
 
 class OpenGLWindow : public QWindow, public QOpenGLFunctions
 {
@@ -30,17 +29,18 @@ public slots:
 	void renderNow();
 
 protected:
+
+	inline QOpenGLContext& glContext() { return m_context; }
 		
 	bool event(QEvent* event);
 
 	void exposeEvent(QExposeEvent* event);
 	void resizeEvent(QResizeEvent* event);
 	
-	std::unique_ptr<QOpenGLContext> m_context;
-	std::unique_ptr<QOpenGLPaintDevice> m_paintDevice;
-
 private:
 	
+	QOpenGLContext m_context;
+
 	bool m_renderEnable;
 	bool m_updatePending;
 	bool m_animating;

@@ -42,7 +42,7 @@ public:
 	template <unsigned pos, unsigned b4, unsigned size, unsigned... more>
 	friend void setImpl(Bitfields<size, more...>& bf, unsigned val);
 
-	inline StoreType getStore() const { return m_store; }
+	inline operator StoreType() const { return m_store; }
 	
 private:
 	
@@ -62,7 +62,7 @@ unsigned getImpl(Bitfields<size, sizes...> bf)
 		return (bf.m_store >> b4) & ((1u << size) - 1);
 	}
 	
-	return getImpl<pos - (pos ? 1 : 0), b4 + (pos ? size : 0)>(bf);
+	return getImpl<(pos - (pos ? 1 : 0)), (b4 + (pos ? size : 0))>(bf);
 }
 	
 template <unsigned pos, unsigned b4, unsigned size, unsigned... sizes>
@@ -77,7 +77,7 @@ void setImpl(Bitfields<size, sizes...>& bf, unsigned val)
 		return;
 	}
 	
-	setImpl<pos - (pos ? 1 : 0), b4 + (pos ? size : 0)>(bf, val);
+	setImpl<(pos - (pos ? 1 : 0)), (b4 + (pos ? size : 0))>(bf, val);
 }
 	
 template <unsigned pos, unsigned... sizes>

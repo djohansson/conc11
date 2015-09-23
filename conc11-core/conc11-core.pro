@@ -1,8 +1,8 @@
 QT -= core \
 	gui
+
 TARGET = conc11-core
 TEMPLATE = lib
-DESTDIR = ../local
 DEFINES += CONC11_CORE_EXPORTS
 INCLUDEPATH += src
 HEADERS += \

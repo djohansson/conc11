@@ -21,7 +21,6 @@ namespace conc11
 {
 
 typedef unsigned char UnitType;
-	
 
 template<typename T>
 struct VoidToUnitType
